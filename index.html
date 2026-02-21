@@ -333,7 +333,9 @@ ${text}
   netlifyIdentity.on("init", user => {
     if (!user) netlifyIdentity.open();
   });
-  netlifyIdentity.on("login", () => location.reload());
+  netlifyIdentity.on("login", () => {
+  netlifyIdentity.close();
+});
 </script>
 </body>
 </html>
