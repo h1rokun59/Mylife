@@ -24,10 +24,10 @@ jobs:
             IS_PRO=false
             IS_LIFE=false
             
-            if echo "$TAGS" | grep -qP "Resilience|SOC|Threat|Cloud|AI|Architecture|People|Process"; then
+            if echo "$TAGS" | grep -qE "Resilience|SOC|Threat|Cloud|AI|Architecture|People|Process"; then
               IS_PRO=true
             fi
-            if echo "$TAGS" | grep -qP "Ski|Hiking|Camp|Bike|Rural|Life|Random"; then
+            if echo "$TAGS" | grep -qE "Ski|Hiking|Camp|Bike|Rural|Life|Random"; then
               IS_LIFE=true
             fi
             
