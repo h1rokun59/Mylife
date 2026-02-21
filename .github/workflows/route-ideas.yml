@@ -18,36 +18,30 @@ jobs:
           git diff --name-only HEAD~1 HEAD | grep '^ideas/.*\.md$' | while read file; do
             echo "Processing: $file"
             
-            # タグ行を取得
             TAGS=$(grep '^\*\*Tags:\*\*' "$file" || echo "")
             echo "Tags: $TAGS"
             
-            # 振り分け先を決定
-            TARGET_REPO=""
-            if echo "$TAGS" | grep -qE "Resilience|SOC|Threat Intel|Cloud|AI/ML|Architecture|People|Process"; then
-              TARGET_REPO="SOC-Modernization"
-            elif echo "$TAGS" | grep -qE "Ski|Hiking|Camp|Bike|Rural|Life|Random"; then
-              TARGET_REPO="Mylife"
+            IS_PRO=false
+            IS_LIFE=false
+            
+            if echo "$TAGS" | grep -qP "Resilience|SOC|Threat|Cloud|AI|Architecture|People|Process"; then
+              IS_PRO=true
+            fi
+            if echo "$TAGS" | grep -qP "Ski|Hiking|Camp|Bike|Rural|Life|Random"; then
+              IS_LIFE=true
             fi
             
-            if [ -z "$TARGET_REPO" ]; then
-              echo "No matching tag found, skipping."
-              continue
-            fi
-            
-            echo "Routing to: $TARGET_REPO"
-            
-            # ターゲットリポジトリにコピー
-            git clone https://x-access-token:${ROUTER_PAT}@github.com/h1rokun59/${TARGET_REPO}.git /tmp/${TARGET_REPO}
-            
-            mkdir -p /tmp/${TARGET_REPO}/${file%/*}
-            cp "$file" /tmp/${TARGET_REPO}/${file}
-            
-            cd /tmp/${TARGET_REPO}
-            git config user.email "actions@github.com"
-            git config user.name "GitHub Actions"
-            git add .
-            git commit -m "💡 routed: $(basename $file)"
-            git push
-            cd -
+            for TARGET_REPO in $([ "$IS_PRO" = true ] && echo "SOC-Modernization") $([ "$IS_LIFE" = true ] && echo "Mylife"); do
+              echo "Routing to: $TARGET_REPO"
+              git clone https://x-access-token:${ROUTER_PAT}@github.com/h1rokun59/${TARGET_REPO}.git /tmp/${TARGET_REPO}
+              mkdir -p /tmp/${TARGET_REPO}/${file%/*}
+              cp "$file" /tmp/${TARGET_REPO}/${file}
+              cd /tmp/${TARGET_REPO}
+              git config user.email "actions@github.com"
+              git config user.name "GitHub Actions"
+              git add .
+              git commit -m "💡 routed: $(basename $file)"
+              git push
+              cd -
+            done
           done
