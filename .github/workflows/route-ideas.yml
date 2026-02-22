@@ -19,7 +19,7 @@ jobs:
         run: |
           git show --name-only --format="" HEAD | grep '^ideas/.*\.md$' | while read file; do
             echo "Processing: $file"
-            TAGS=$(grep '\*\*Tags:\*\*' "$file" || echo "")
+            TAGS=$(grep '^\*\*Tags:\*\*' "$file" || echo "")
             echo "Tags found: $TAGS"
             IS_PRO=false
             IS_LIFE=false
