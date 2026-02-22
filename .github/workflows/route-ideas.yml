@@ -14,8 +14,7 @@ jobs:
       - name: Route to target repository
         env:
           ROUTER_PAT: ${{ secrets.ROUTER_PAT }}
-          run: |
-          # HEAD~1が存在しない場合の対応
+        run: |
           BASE=$(git rev-parse HEAD~1 2>/dev/null || git rev-parse --root HEAD)
           git diff --name-only $BASE HEAD | grep '^ideas/.*\.md$' | while read file; do
             echo "Processing: $file"
