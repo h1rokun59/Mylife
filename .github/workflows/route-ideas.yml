@@ -14,12 +14,14 @@ jobs:
       - name: Route to target repository
         env:
           ROUTER_PAT: ${{ secrets.ROUTER_PAT }}
-        run: |
-          git diff --name-only HEAD~1 HEAD | grep '^ideas/.*\.md$' | while read file; do
+          run: |
+          # HEAD~1が存在しない場合の対応
+          BASE=$(git rev-parse HEAD~1 2>/dev/null || git rev-parse --root HEAD)
+          git diff --name-only $BASE HEAD | grep '^ideas/.*\.md$' | while read file; do
             echo "Processing: $file"
             
-            TAGS=$(grep '^\*\*Tags:\*\*' "$file" || echo "")
-            echo "Tags: $TAGS"
+            TAGS=$(grep '\*\*Tags:\*\*' "$file" || echo "")
+            echo "Tags found: $TAGS"
             
             IS_PRO=false
             IS_LIFE=false
@@ -30,6 +32,8 @@ jobs:
             if echo "$TAGS" | grep -qE "Ski|Hiking|Camp|Bike|Rural|Life|Random"; then
               IS_LIFE=true
             fi
+            
+            echo "IS_PRO: $IS_PRO, IS_LIFE: $IS_LIFE"
             
             for TARGET_REPO in $([ "$IS_PRO" = true ] && echo "SOC-Modernization") $([ "$IS_LIFE" = true ] && echo "Mylife"); do
               echo "Routing to: $TARGET_REPO"
