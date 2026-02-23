@@ -8,7 +8,7 @@ on:
 
 jobs:
   process:
-    if: github.repository == 'h1rokun59/Mylife' && github.actor != 'github-actions[bot]'
+    if: github.repository == 'h1rokun59/Mylife'
     runs-on: ubuntu-latest
 
     permissions:
