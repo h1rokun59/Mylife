@@ -157,9 +157,8 @@
       <span class="tag life" data-key="life" data-kind="category" onclick="toggleTag(this)">🌱 Life</span>
       <span class="tag life" data-key="random" data-kind="category" onclick="toggleTag(this)">💡 Random</span>
 
-      <!-- Actions -->
+      <!-- Action tag -->
       <span class="tag pro" data-key="research" data-kind="action" onclick="toggleTag(this)">🔎 Research</span>
-      <span class="tag pro" data-key="heavy" data-kind="action" onclick="toggleTag(this)">🚛 Heavy</span>
     </div>
   </div>
 
@@ -178,6 +177,7 @@
   <div id="historyList"></div>
 </div>
 
+<!-- メインスクリプト -->
 <script>
   let recognition = null;
   let isListening = false;
@@ -206,18 +206,6 @@
 
   function toggleTag(el) {
     el.classList.toggle('selected');
-    syncHeavyResearch();
-  }
-
-  // Heavy を押したら Research も自動で選択（押し忘れ防止）
-  function syncHeavyResearch() {
-    const heavy = document.querySelector('.tag[data-kind="action"][data-key="heavy"]');
-    const research = document.querySelector('.tag[data-kind="action"][data-key="research"]');
-    if (!heavy || !research) return;
-
-    if (heavy.classList.contains('selected') && !research.classList.contains('selected')) {
-      research.classList.add('selected');
-    }
   }
 
   function getSelectedTags() {
@@ -317,9 +305,6 @@
     const categoryTags = selectedTags.filter(t => t.kind === 'category');
     const actionTags = selectedTags.filter(t => t.kind === 'action');
 
-    const hasHeavy = actionTags.some(t => t.key === 'heavy');
-    const executionMode = hasHeavy ? 'super-heavy' : 'normal';
-
     const now = new Date();
     const { dateStr, timeStr, timestamp } = formatJstParts(now);
     const nowUtc = now.toISOString();
@@ -334,22 +319,14 @@
       ? `**TagKeys:** ${categoryTags.map(t => t.key).join(',')}`
       : '';
 
-    // Actions: research / heavy（heavy は super-heavy のスイッチとして扱う）
-    // heavy が選ばれている場合は research を必ず含める（UIでも自動選択してるが保険）
-    const actionKeys = [...new Set(actionTags.map(t => t.key))];
-    if (hasHeavy && !actionKeys.includes('research')) actionKeys.push('research');
-
-    const actionsLine = actionKeys.length > 0
-      ? `**Actions:** ${actionKeys.join(',')}`
+    const actionsLine = actionTags.length > 0
+      ? `**Actions:** ${actionTags.map(t => t.key).join(',')}`
       : '';
-
-    const modeLine = `**Mode:** ${executionMode}`;
 
     const metadataLines = [
       `**Idea-ID:** ${ideaId}`,
       `**Created-At-UTC:** ${nowUtc}`,
       `**Created-At-JST:** ${nowJst}`,
-      modeLine,
       tagLine,
       tagKeysLine,
       actionsLine
