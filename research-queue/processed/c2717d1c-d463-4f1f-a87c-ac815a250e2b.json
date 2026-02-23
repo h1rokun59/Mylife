@@ -1,6 +1,6 @@
 {
   "queue_version": 1,
-  "status": "pending",
+  "status": "done",
   "task_type": "openclaw_research",
   "requested_action": "research",
   "idea_id": "c2717d1c-d463-4f1f-a87c-ac815a250e2b",
@@ -56,5 +56,17 @@
     "enqueued_at_utc": "2026-02-23T12:21:35Z",
     "trigger": "github_actions",
     "workflow": "enqueue-research.yml"
+  },
+  "process": {
+    "processed_at_utc": "2026-02-23T12:21:47Z",
+    "worker": {
+      "name": "github-actions-dummy-worker",
+      "version": 1
+    },
+    "mode": "dummy"
+  },
+  "result": {
+    "path": "research-results/c2717d1c-d463-4f1f-a87c-ac815a250e2b.md",
+    "summary": "Dummy result created by GitHub Actions"
   }
 }
