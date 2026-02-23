@@ -19,7 +19,7 @@ jobs:
         with:
           fetch-depth: 2
 
-      - name: Enqueue ideas with Actions: research
+      - name: "Enqueue ideas with Actions: research"
         env:
           BEFORE_SHA: ${{ github.event.before }}
           CURRENT_SHA: ${{ github.sha }}
@@ -145,7 +145,7 @@ jobs:
                   actions: ($actions | split(",") | map(select(length > 0))),
                   created_at_utc: (if $created_at_utc == "" then null else $created_at_utc end),
                   created_at_jst: (if $created_at_jst == "" then null else $created_at_jst end)
-                },
+                },name: Enqueue ideas
                 enqueue: {
                   enqueued_at_utc: $enqueued_at_utc,
                   trigger: "github_actions",
