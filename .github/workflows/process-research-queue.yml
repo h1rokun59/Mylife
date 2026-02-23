@@ -31,15 +31,14 @@ jobs:
           GEMINI_MODEL_NORMAL: gemini-2.5-flash
           GEMINI_THINKING_BUDGET: "-1"
           ROUTER_PAT: ${{ secrets.ROUTER_PAT }}
-          SOC_REPO_SLUG: soc-modernization
           SOC_OWNER: h1rokun59
+          SOC_REPO_SLUG: soc-modernization
         run: |
           set -euo pipefail
 
           NOW_EPOCH="$(date -u +%s)"
           NOW_UTC="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
-          echo "NOW_UTC=$NOW_UTC"
-          echo "Event: $GITHUB_EVENT_NAME"
+          echo "NOW_UTC=$NOW_UTC event=$GITHUB_EVENT_NAME"
 
           PENDING_FILES=$(git ls-files 'research-queue/pending/*.json' || true)
           if [ -z "${PENDING_FILES}" ]; then
@@ -51,13 +50,11 @@ jobs:
           mkdir -p research-queue/processed
 
           processed_any=false
-          SOC_CHANGED=false
-          MYLIFE_RESULTS_CHANGED=false
           GEMINI_CALLS_THIS_RUN=0
+          SOC_CHANGED=false
 
           SOC_DIR="/tmp/${SOC_REPO_SLUG}"
 
-          # --- helpers ---
           to_epoch() {
             local iso="$1"
             if [ -z "$iso" ] || [ "$iso" = "null" ]; then echo "0"; return; fi
@@ -67,12 +64,6 @@ jobs:
           add_minutes() {
             local minutes="$1"
             date -u -d "${NOW_UTC} + ${minutes} minutes" +"%Y-%m-%dT%H:%M:%SZ"
-          }
-
-          write_md_lines() {
-            local path="$1"; shift
-            mkdir -p "$(dirname "$path")"
-            { for line in "$@"; do printf '%s\n' "$line"; done; } > "$path"
           }
 
           step_file() {
@@ -107,28 +98,25 @@ jobs:
             ' "$path"
           }
 
-          # pro tagkeys 判定
           is_pro_task() {
             local tagcsv="$1"
             echo ",$tagcsv," | grep -qiE ',(resilience|soc|threat-intel|cloud|ai-ml|architecture|people|process),'
           }
 
-          # SOC repo clone（必要時だけ）
           ensure_soc_repo() {
             if [ -d "${SOC_DIR}/.git" ]; then return 0; fi
             if [ -z "${ROUTER_PAT:-}" ]; then
               echo "ROUTER_PAT is not set. Cannot write to SOC repo."
               exit 2
             fi
-            echo "Cloning SOC repo to ${SOC_DIR} ..."
             git clone "https://x-access-token:${ROUTER_PAT}@github.com/${SOC_OWNER}/${SOC_REPO_SLUG}.git" "${SOC_DIR}"
           }
 
-          # Context Pack 読み込み（存在すれば）
           read_ctx_file() {
             local rel="$1"
             local p="${SOC_DIR}/${rel}"
             if [ -f "$p" ]; then
+              # 取り込みすぎ防止（Geminiの入力を暴れさせない）
               head -c 12000 "$p"
             else
               echo ""
@@ -152,8 +140,7 @@ jobs:
               '{
                 contents: [{ role: "user", parts: [{ text: $p }] }],
                 generationConfig: { thinkingConfig: { thinkingBudget: $b } }
-              }'
-            )"
+              }')"
 
             local resp
             resp="$(curl -sS \
@@ -161,8 +148,7 @@ jobs:
               -H "Content-Type: application/json" \
               -X POST \
               "https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent" \
-              -d "$req"
-            )" || { echo "__ERROR__: curl failed"; return 3; }
+              -d "$req")" || { echo "__ERROR__: curl failed"; return 3; }
 
             if echo "$resp" | jq -e '.error' >/dev/null 2>&1; then
               echo "__ERROR__: $(echo "$resp" | jq -r '.error.message // "unknown error"')"
@@ -180,20 +166,16 @@ jobs:
             return 0
           }
 
-          # SOC push（rebase retry）
           push_soc_repo() {
             local msg="$1"
             if [ "$SOC_CHANGED" != "true" ]; then return 0; fi
 
-            echo "Committing/pushing to SOC repo..."
             git -C "${SOC_DIR}" config user.email "actions@github.com"
             git -C "${SOC_DIR}" config user.name "GitHub Actions"
-
-            git -C "${SOC_DIR}" add research-results research-context 2>/dev/null || true
+            git -C "${SOC_DIR}" add research-results 2>/dev/null || true
             git -C "${SOC_DIR}" commit -m "$msg" || echo "Nothing to commit in SOC."
 
             for i in 1 2 3; do
-              echo "SOC push attempt $i..."
               git -C "${SOC_DIR}" fetch origin main
               if git -C "${SOC_DIR}" rebase origin/main; then
                 if git -C "${SOC_DIR}" push; then
@@ -201,12 +183,10 @@ jobs:
                   return 0
                 fi
               else
-                echo "SOC rebase failed, aborting."
                 git -C "${SOC_DIR}" rebase --abort || true
               fi
               sleep $((i * 2))
             done
-
             echo "SOC push failed after retries."
             return 1
           }
@@ -218,12 +198,8 @@ jobs:
             [ -z "$qfile" ] && continue
             [ ! -f "$qfile" ] && continue
 
-            echo "----------------------------------------"
-            echo "Queue: $qfile"
-
             IDEA_ID=$(jq -r '.idea_id // ""' "$qfile")
             STATUS=$(jq -r '.status // ""' "$qfile")
-
             MODE=$(jq -r '.execution.mode // "normal"' "$qfile")
             ONE_STEP_PER_RUN=$(jq -r '.execution.one_step_per_run // true' "$qfile")
             COOLDOWN_MIN=$(jq -r '.execution.cooldown_minutes_between_steps // 15' "$qfile")
@@ -234,6 +210,7 @@ jobs:
             TITLE=$(jq -r '.idea.title // ""' "$qfile")
             TAG_KEYS=$(jq -r '(.idea.tag_keys // []) | join(",")' "$qfile")
             ACTIONS=$(jq -r '(.idea.actions // []) | join(",")' "$qfile")
+
             SOURCE_URL=$(jq -r '.source.url // ""' "$qfile")
             SOURCE_PATH=$(jq -r '.source.path // ""' "$qfile")
 
@@ -246,7 +223,7 @@ jobs:
               continue
             fi
 
-            # proならSOCへ出力
+            # pro -> SOCへ出力
             TARGET="mylife"
             if [ "$MODE" = "super-heavy" ] || is_pro_task "$TAG_KEYS"; then
               TARGET="soc"
@@ -259,14 +236,12 @@ jobs:
               continue
             fi
 
-            # output dir
-            OUT_DIR_MYLIFE="research-results/${IDEA_ID}"
-            OUT_DIR_SOC="${SOC_DIR}/research-results/${IDEA_ID}"
-            OUT_DIR="$OUT_DIR_MYLIFE"
-            if [ "$TARGET" = "soc" ]; then OUT_DIR="$OUT_DIR_SOC"; fi
+            OUT_DIR="research-results/${IDEA_ID}"
+            if [ "$TARGET" = "soc" ]; then
+              OUT_DIR="${SOC_DIR}/research-results/${IDEA_ID}"
+            fi
             mkdir -p "$OUT_DIR"
 
-            # steps to run this round
             steps_to_run=()
             if [ "$MODE" = "super-heavy" ] && [ "$ONE_STEP_PER_RUN" = "false" ]; then
               s="$CUR_STEP"
@@ -275,8 +250,6 @@ jobs:
               steps_to_run+=("$CUR_STEP")
             fi
 
-            echo "Target=$TARGET Mode=$MODE current_step=$CUR_STEP steps_to_run=${steps_to_run[*]}"
-
             for s in "${steps_to_run[@]}"; do
               sf="$(step_file "$s")"
               step_path="${OUT_DIR}/${sf}"
@@ -284,22 +257,29 @@ jobs:
               if [ "$MODE" = "normal" ] && [ "$s" = "step1" ]; then
                 IDEA_BODY="$(extract_idea_body "$SOURCE_PATH")"
 
-                # Context Pack（SOC task時のみ注入）
                 CTX=""
                 if [ "$TARGET" = "soc" ]; then
+                  # ここが「今まで作ったのを調査に使う」核心
                   CTX_MUST="$(read_ctx_file 'research-context/00-MUST-READ.md')"
+                  CTX_DATA="$(read_ctx_file 'research-context/10-data-handling.md')"
                   CTX_GUARD="$(read_ctx_file 'research-context/20-research-guardrails.md')"
+                  CTX_OUTT="$(read_ctx_file 'research-context/30-output-template.md')"
+                  CTX_BG="$(read_ctx_file 'research-context/background.md')"
+                  CTX_ORG="$(read_ctx_file 'research-context/40-org-context-sanitized.md')"
+                  CTX_TOOL="$(read_ctx_file 'research-context/50-tool-landscape-candidates.md')"
                   CTX_STEP1="$(read_ctx_file 'research-context/3step/step1-instructions.md')"
-                  CTX="$(printf '%s\n\n%s\n\n%s\n' "$CTX_MUST" "$CTX_GUARD" "$CTX_STEP1")"
+                  CTX="$(printf '%s\n\n%s\n\n%s\n\n%s\n\n%s\n\n%s\n\n%s\n\n%s\n' \
+                    "$CTX_MUST" "$CTX_DATA" "$CTX_GUARD" "$CTX_OUTT" "$CTX_BG" "$CTX_ORG" "$CTX_TOOL" "$CTX_STEP1")"
                 fi
 
                 PROMPT="$(
                   {
                     printf '%s\n' 'あなたはリサーチ支援AIです。いまから「3Step調査プロセスのStep1（論点整理＋調査設計）」だけを実施してください。'
+                    printf '%s\n' '※会社系コンテクストとガードレールを必ず前提として扱うこと。'
                     printf '\n'
                     printf '%s\n' '制約:'
-                    printf '%s\n' '- いまは外部Web検索はしません（事実の断定より、調査設計と論点整理に集中）'
-                    printf '%s\n' '- 社内機密・固有名詞・個人情報は出力に含めない（与えられていても抽象化）'
+                    printf '%s\n' '- 外部Web検索はしない（断定より調査設計と論点整理に集中）'
+                    printf '%s\n' '- 機密/固有名詞/個人情報は禁止（抽象化）'
                     printf '%s\n' '- 不確実なことは「未確認」と明記'
                     printf '%s\n' '- 出力はMarkdownのみ'
                     printf '\n'
@@ -308,30 +288,19 @@ jobs:
                       printf '%s\n' 'Context Pack (MUST READ):'
                       printf '%s\n' "$CTX"
                       printf '\n'
+                      printf '%s\n' '---'
                     fi
-                    printf '%s\n' '出力フォーマット:'
-                    printf '%s\n' '## TL;DR'
-                    printf '%s\n' '## 調査目的'
-                    printf '%s\n' '## スコープ / 非スコープ'
-                    printf '%s\n' '## 主要な論点（3〜7）'
-                    printf '%s\n' '## 仮説（あれば）'
-                    printf '%s\n' '## 収集すべき一次情報（カテゴリで：公式Doc/RFC/NIST/MITRE等）'
-                    printf '%s\n' '## 15分×3Step前提の進め方（Step1→Step2→Step3の要点）'
-                    printf '%s\n' '## 未確認点・リスク'
-                    printf '%s\n' '## 次アクション（具体的に）'
-                    printf '\n'
                     printf '%s\n' '入力（アイデア）:'
                     printf '%s\n' "- Title: ${TITLE}"
                     printf '%s\n' "- TagKeys: ${TAG_KEYS}"
                     printf '%s\n' "- Actions: ${ACTIONS}"
                     printf '%s\n' "- Source: ${SOURCE_URL}"
                     printf '\n'
-                    printf '%s\n' '---'
                     printf '%s\n' "${IDEA_BODY}"
                   }
                 )"
 
-                echo "Calling Gemini for step1..."
+                echo "Calling Gemini for step1... target=$TARGET"
                 GEMINI_CALLS_THIS_RUN=$((GEMINI_CALLS_THIS_RUN + 1))
 
                 set +e
@@ -340,22 +309,11 @@ jobs:
                 set -e
 
                 if [ $RC -ne 0 ] || echo "$OUT" | grep -q '^__ERROR__:'; then
-                  echo "Gemini error: $OUT"
-                  write_md_lines "$step_path" \
-                    "# 🧩 step1 (Gemini ERROR)" \
-                    "" \
-                    "**Idea-ID:** ${IDEA_ID}" \
-                    "**Mode:** ${MODE}" \
-                    "**Target:** ${TARGET}" \
-                    "**Ran-At-UTC:** ${NOW_UTC}" \
-                    "" \
-                    "## Error" \
-                    "${OUT}" \
-                    "" \
-                    "## Action" \
-                    "- GEMINI_API_KEY / quota を確認して再実行してください。"
+                  mkdir -p "$(dirname "$step_path")"
+                  printf '%s\n' "# 🧩 step1 (Gemini ERROR)" > "$step_path"
+                  printf '%s\n' "$OUT" >> "$step_path"
                   processed_any=true
-                  if [ "$TARGET" = "soc" ]; then SOC_CHANGED=true; else MYLIFE_RESULTS_CHANGED=true; fi
+                  [ "$TARGET" = "soc" ] && SOC_CHANGED=true
                   continue 2
                 fi
 
@@ -369,26 +327,19 @@ jobs:
                   printf '%s\n' "$OUT"
                 } > "$step_path"
 
-                if [ "$TARGET" = "soc" ]; then SOC_CHANGED=true; else MYLIFE_RESULTS_CHANGED=true; fi
+                [ "$TARGET" = "soc" ] && SOC_CHANGED=true
 
               else
-                write_md_lines "$step_path" \
-                  "# 🧩 ${s} (placeholder)" \
-                  "" \
-                  "**Idea-ID:** ${IDEA_ID}" \
-                  "**Mode:** ${MODE}" \
-                  "**Target:** ${TARGET}" \
-                  "**Title:** ${TITLE}" \
-                  "**TagKeys:** ${TAG_KEYS}" \
-                  "**Actions:** ${ACTIONS}" \
-                  "**Source:** ${SOURCE_URL}" \
-                  "**Ran-At-UTC:** ${NOW_UTC}" \
-                  "" \
-                  "## Output (Dummy)" \
-                  "- Placeholder step output." \
-                  "- Later: Normal=Gemini Thinking, Super Heavy=Claude Code orchestration."
+                mkdir -p "$(dirname "$step_path")"
+                {
+                  printf '# 🧩 %s (placeholder)\n\n' "$s"
+                  printf '**Idea-ID:** %s\n' "$IDEA_ID"
+                  printf '**Mode:** %s\n' "$MODE"
+                  printf '**Target:** %s\n' "$TARGET"
+                  printf '**Ran-At-UTC:** %s\n' "$NOW_UTC"
+                } > "$step_path"
 
-                if [ "$TARGET" = "soc" ]; then SOC_CHANGED=true; else MYLIFE_RESULTS_CHANGED=true; fi
+                [ "$TARGET" = "soc" ] && SOC_CHANGED=true
               fi
             done
 
@@ -396,11 +347,9 @@ jobs:
             NEXT_STEP="$(next_step "$LAST_STEP_RUN")"
 
             if [ -z "$NEXT_STEP" ]; then
-              # done → processed（Mylife側のqueueに result参照を残す）
               PROCESSED_Q="research-queue/processed/${IDEA_ID}.json"
-
               RESULT_REPO="$GITHUB_REPOSITORY"
-              RESULT_DIR="$OUT_DIR_MYLIFE"
+              RESULT_DIR="research-results/${IDEA_ID}"
               if [ "$TARGET" = "soc" ]; then
                 RESULT_REPO="${SOC_OWNER}/${SOC_REPO_SLUG}"
                 RESULT_DIR="research-results/${IDEA_ID}"
@@ -411,16 +360,12 @@ jobs:
                 --arg result_repo "$RESULT_REPO" \
                 --arg result_dir "$RESULT_DIR" \
                 '
-                .status = "done"
-                | .state.status = "done"
-                | .state.current_step = null
-                | .state.next_eligible_at_utc = null
-                | .process = {
-                    processed_at_utc: $processed_at_utc,
-                    worker: { name: "github-actions-stepwise-worker", version: 3 },
-                    mode: "gemini-step1+soc-output"
-                  }
-                | .result = { repo: $result_repo, dir: $result_dir }
+                .status="done"
+                | .state.status="done"
+                | .state.current_step=null
+                | .state.next_eligible_at_utc=null
+                | .process={ processed_at_utc:$processed_at_utc, worker:{name:"github-actions-stepwise-worker",version:4}, mode:"gemini-step1+soc-context" }
+                | .result={ repo:$result_repo, dir:$result_dir }
                 ' "$qfile" > "$PROCESSED_Q"
 
               git rm -f "$qfile"
@@ -438,23 +383,18 @@ jobs:
                 --arg next_eligible "$next_eligible" \
                 --arg mode "$MODE" \
                 '
-                .status = "pending"
-                | .execution.mode = $mode
-                | .state.status = "queued"
-                | .state.current_step = $next_step
-                | .state.next_eligible_at_utc = $next_eligible
-                | .state.completed_steps = (
-                    (.state.completed_steps // [])
-                    + [ "'"$CUR_STEP"'" ]
-                    | unique
-                  )
-                | .state.last_run_at_utc = $now
+                .status="pending"
+                | .execution.mode=$mode
+                | .state.status="queued"
+                | .state.current_step=$next_step
+                | .state.next_eligible_at_utc=$next_eligible
+                | .state.completed_steps=((.state.completed_steps//[])+["'"$CUR_STEP"'"]|unique)
+                | .state.last_run_at_utc=$now
                 ' "$qfile" > "$tmp"
 
               mv "$tmp" "$qfile"
               processed_any=true
             fi
-
           done <<< "$PENDING_FILES"
 
           if [ "$processed_any" != "true" ]; then
@@ -462,12 +402,10 @@ jobs:
             exit 0
           fi
 
-          # --- push SOC repo (if changed) ---
           if [ "$SOC_CHANGED" = "true" ]; then
-            push_soc_repo "🔎 update research results"
+            push_soc_repo "🔎 update research results (context-injected)"
           fi
 
-          # --- commit/push Mylife changes (queue + life results) ---
           if [ -z "$(git status --porcelain -- research-queue research-results)" ]; then
             echo "No Mylife changes to commit."
             exit 0
@@ -475,12 +413,10 @@ jobs:
 
           git config user.email "actions@github.com"
           git config user.name "GitHub Actions"
-
           git add research-queue research-results
-          git commit -m "🤖 stepwise process research queue (soc output for pro)" || echo "Nothing to commit."
+          git commit -m "🤖 stepwise process research queue (soc context)" || echo "Nothing to commit."
 
           for i in 1 2 3; do
-            echo "Mylife push attempt $i..."
             git fetch origin main
             if git rebase origin/main; then
               if git push; then
