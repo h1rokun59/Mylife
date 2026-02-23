@@ -5,8 +5,12 @@ on:
     workflows: ["Enqueue Research Requests"]
     types: [completed]
   schedule:
-    - cron: "*/5 * * * *"   # 5分おきに見回る（cooldownはqueueのnext_eligibleで制御）
+    - cron: "*/5 * * * *"
   workflow_dispatch:
+
+concurrency:
+  group: mylife-main-writes
+  cancel-in-progress: false
 
 jobs:
   process:
@@ -19,7 +23,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 2
+          fetch-depth: 0
 
       - name: "Process pending queue stepwise (mode-aware)"
         run: |
@@ -43,7 +47,6 @@ jobs:
 
           processed_any=false
 
-          # helper: safe epoch parse
           to_epoch() {
             local iso="$1"
             if [ -z "$iso" ] || [ "$iso" = "null" ]; then
@@ -53,13 +56,11 @@ jobs:
             date -u -d "$iso" +%s 2>/dev/null || echo "0"
           }
 
-          # helper: add minutes to NOW_UTC
           add_minutes() {
             local minutes="$1"
             date -u -d "${NOW_UTC} + ${minutes} minutes" +"%Y-%m-%dT%H:%M:%SZ"
           }
 
-          # helper: write a markdown file safely
           write_md() {
             local path="$1"
             shift
@@ -71,7 +72,6 @@ jobs:
             } > "$path"
           }
 
-          # map step name -> file prefix
           step_file() {
             local step="$1"
             case "$step" in
@@ -82,7 +82,6 @@ jobs:
             esac
           }
 
-          # determine next step
           next_step() {
             local step="$1"
             case "$step" in
@@ -129,23 +128,17 @@ jobs:
               continue
             fi
 
-            # cooldown gate
             NEXT_EPOCH="$(to_epoch "$NEXT_ELIGIBLE")"
             if [ "$NEXT_EPOCH" -gt "$NOW_EPOCH" ]; then
               echo "Skip: not eligible yet. next_eligible_at_utc=$NEXT_ELIGIBLE"
               continue
             fi
 
-            # output folder per idea
             OUT_DIR="research-results/${IDEA_ID}"
             mkdir -p "$OUT_DIR"
 
-            # Decide how many steps to run this time
-            # - normal: 1 step per run (ONE_STEP_PER_RUN=true, cooldown>0)
-            # - super-heavy: run all remaining steps in one go (ONE_STEP_PER_RUN=false, cooldown=0)
             steps_to_run=()
             if [ "$MODE" = "super-heavy" ] && [ "$ONE_STEP_PER_RUN" = "false" ]; then
-              # run from current to end
               s="$CUR_STEP"
               while [ -n "$s" ]; do
                 steps_to_run+=("$s")
@@ -157,7 +150,6 @@ jobs:
 
             echo "Mode=$MODE current_step=$CUR_STEP steps_to_run=${steps_to_run[*]}"
 
-            # run steps (dummy for now; later replace with Gemini/Claude Code)
             for s in "${steps_to_run[@]}"; do
               sf="$(step_file "$s")"
               step_path="${OUT_DIR}/${sf}"
@@ -174,13 +166,12 @@ jobs:
                 "**Ran-At-UTC:** ${NOW_UTC}" \
                 "" \
                 "## Output (Dummy)" \
-                "- This is a placeholder step output." \
-                "- Next: replace this block with Gemini (Normal) or multi-model (Super Heavy) execution." \
+                "- Placeholder step output." \
+                "- Later: Normal=Gemini Thinking, Super Heavy=Claude Code orchestration." \
                 "" \
                 "## Notes" \
                 "- Completed steps so far: ${COMPLETED}"
 
-              # update completed_steps in-memory string (for log only)
               if [ -z "$COMPLETED" ]; then
                 COMPLETED="$s"
               else
@@ -188,12 +179,10 @@ jobs:
               fi
             done
 
-            # determine new state after running
             LAST_STEP_RUN="${steps_to_run[-1]}"
             NEXT_STEP="$(next_step "$LAST_STEP_RUN")"
 
             if [ -z "$NEXT_STEP" ]; then
-              # Done: write final + meta, move queue to processed
               FINAL_PATH="${OUT_DIR}/final.md"
               META_PATH="${OUT_DIR}/meta.json"
               PROCESSED_Q="research-queue/processed/${IDEA_ID}.json"
@@ -206,8 +195,8 @@ jobs:
                 "**Completed-At-UTC:** ${NOW_UTC}" \
                 "" \
                 "## What happened" \
-                "- Stepwise pipeline executed all steps and produced placeholder outputs." \
-                "- Next: swap step placeholders with real Gemini/Claude Code execution." \
+                "- Stepwise pipeline executed all steps (placeholder)." \
+                "- Next: swap placeholders with real model execution." \
                 "" \
                 "## Files" \
                 "- 01-step1.md" \
@@ -225,10 +214,9 @@ jobs:
                   mode: $mode,
                   completed_at_utc: $completed_at_utc,
                   output_dir: $out_dir,
-                  files: ["01-step1.md","02-step2.md","03-step3.md","final.md"]
+                  files: ["01-step1.md","02-step2.md","03-step3.md","final.md","meta.json"]
                 }' > "$META_PATH"
 
-              # update queue JSON -> processed
               jq \
                 --arg processed_at_utc "$NOW_UTC" \
                 --arg result_dir "$OUT_DIR" \
@@ -246,12 +234,9 @@ jobs:
                 ' "$qfile" > "$PROCESSED_Q"
 
               git rm -f "$qfile"
-
               echo "DONE: ${IDEA_ID} -> ${OUT_DIR} , queue moved to processed"
               processed_any=true
             else
-              # Not done: update queue JSON in place (pending)
-              # next eligible time = now + cooldown (normal: 15m, heavy: 0)
               next_eligible="$NOW_UTC"
               if [ "$COOLDOWN_MIN" != "0" ] && [ "$COOLDOWN_MIN" != "null" ]; then
                 next_eligible="$(add_minutes "$COOLDOWN_MIN")"
@@ -298,5 +283,21 @@ jobs:
           git config user.name "GitHub Actions"
 
           git add research-queue research-results
-          git commit -m "🤖 stepwise process research queue (mode-aware)"
-          git push
+          git commit -m "🤖 stepwise process research queue (mode-aware)" || echo "Nothing to commit."
+
+          # mainへのpush競合回避（fetch+rebase+push リトライ）
+          for i in 1 2 3; do
+            echo "Push attempt $i..."
+            git fetch origin main
+            if git rebase origin/main; then
+              if git push; then
+                echo "Push succeeded."
+                break
+              fi
+            else
+              echo "Rebase failed, aborting rebase."
+              git rebase --abort || true
+            fi
+            echo "Push failed, retrying..."
+            sleep $((i * 2))
+          done
