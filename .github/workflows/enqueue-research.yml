@@ -19,7 +19,7 @@ jobs:
         with:
           fetch-depth: 2
 
-      - name: "Enqueue ideas with Actions: research"
+      - name: "Enqueue ideas with Actions: research (heavy-aware)"
         env:
           BEFORE_SHA: ${{ github.event.before }}
           CURRENT_SHA: ${{ github.sha }}
@@ -56,30 +56,56 @@ jobs:
             echo "----------------------------------------"
             echo "Processing: $file"
 
-            # 機械可読メタデータを抽出（なければ空）
+            # 機械可読メタデータ抽出（なければ空）
             ACTIONS_LINE=$(grep -E '^\*\*Actions:\*\* ' "$file" || true)
             TAG_KEYS_LINE=$(grep -E '^\*\*TagKeys:\*\* ' "$file" || true)
             IDEA_ID_LINE=$(grep -E '^\*\*Idea-ID:\*\* ' "$file" || true)
             CREATED_UTC_LINE=$(grep -E '^\*\*Created-At-UTC:\*\* ' "$file" || true)
             CREATED_JST_LINE=$(grep -E '^\*\*Created-At-JST:\*\* ' "$file" || true)
+            MODE_LINE=$(grep -E '^\*\*Mode:\*\* ' "$file" || true)
 
             ACTIONS=$(echo "$ACTIONS_LINE" | sed -E 's/^\*\*Actions:\*\* //')
             TAG_KEYS=$(echo "$TAG_KEYS_LINE" | sed -E 's/^\*\*TagKeys:\*\* //')
             IDEA_ID=$(echo "$IDEA_ID_LINE" | sed -E 's/^\*\*Idea-ID:\*\* //')
             CREATED_AT_UTC=$(echo "$CREATED_UTC_LINE" | sed -E 's/^\*\*Created-At-UTC:\*\* //')
             CREATED_AT_JST=$(echo "$CREATED_JST_LINE" | sed -E 's/^\*\*Created-At-JST:\*\* //')
+            MODE=$(echo "$MODE_LINE" | sed -E 's/^\*\*Mode:\*\* //')
 
+            echo "Mode: ${MODE:-<none>}"
             echo "Actions: ${ACTIONS:-<none>}"
             echo "TagKeys: ${TAG_KEYS:-<none>}"
             echo "Idea-ID: ${IDEA_ID:-<none>}"
 
-            # research アクションが無ければスキップ
-            if ! echo ",${ACTIONS}," | grep -qiE '(^|,)research(,|$)'; then
+            # research or heavy を検知（heavyのみでもresearch扱い）
+            HAS_RESEARCH=false
+            HAS_HEAVY=false
+
+            if echo ",${ACTIONS}," | grep -qiE '(^|,)research(,|$)'; then
+              HAS_RESEARCH=true
+            fi
+            if echo ",${ACTIONS}," | grep -qiE '(^|,)heavy(,|$)'; then
+              HAS_HEAVY=true
+            fi
+
+            # heavyだけ入ってるケースはresearch扱いで通す
+            if [ "$HAS_HEAVY" = true ] && [ "$HAS_RESEARCH" = false ]; then
+              HAS_RESEARCH=true
+            fi
+
+            if [ "$HAS_RESEARCH" != true ]; then
               echo "No research action. Skip."
               continue
             fi
 
-            # Idea-ID が無い旧フォーマットも一応対応（basename fallback）
+            # execution mode 決定（Mode行優先、なければ actions heavy で判定）
+            EXECUTION_MODE="normal"
+            if echo "${MODE:-}" | grep -qiE '^super-heavy$'; then
+              EXECUTION_MODE="super-heavy"
+            elif [ "$HAS_HEAVY" = true ]; then
+              EXECUTION_MODE="super-heavy"
+            fi
+
+            # Idea-ID が無い旧フォーマットも一応対応
             if [ -z "${IDEA_ID}" ]; then
               IDEA_ID="$(basename "$file" .md)"
               echo "Fallback Idea-ID: ${IDEA_ID}"
@@ -91,10 +117,9 @@ jobs:
               TITLE="(untitled idea)"
             fi
 
-            # 本文スニペット（メタ行を除いた最初の非空行を雑に抽出）
+            # 本文スニペット（メタ行を除いた最初の非空行を抽出）
             BODY_SNIPPET=$(
               awk '
-                BEGIN { in_body=0 }
                 /^---$/ { next }
                 /^\*Captured via Idea Capture App\*$/ { next }
                 /^# / { next }
@@ -108,7 +133,34 @@ jobs:
             SOURCE_URL="https://github.com/${GITHUB_REPOSITORY}/blob/${CURRENT_SHA}/${file}"
             ENQUEUED_AT_UTC="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
 
-            # jqで安全にJSON生成（ubuntu-latest で利用可）
+            # providers（modeで分岐）
+            PROVIDERS_ALLOWED='["gemini"]'
+            PROVIDERS_PRIMARY="gemini"
+            EXEC_STRATEGY="sequential"
+            EXEC_PARALLELISM=1
+            COOLDOWN_MIN=15
+            ONE_STEP_PER_RUN=true
+
+            if [ "$EXECUTION_MODE" = "super-heavy" ]; then
+              PROVIDERS_ALLOWED='["chatgpt","claude","gemini"]'
+              PROVIDERS_PRIMARY="claude"
+              EXEC_STRATEGY="stepwise-parallel"
+              EXEC_PARALLELISM=3
+              COOLDOWN_MIN=0
+              ONE_STEP_PER_RUN=false
+            fi
+
+            # actions配列を正規化（heavyのみでも research を含める）
+            ACTIONS_CANON="${ACTIONS}"
+            if [ "$HAS_HEAVY" = true ] && ! echo ",${ACTIONS_CANON}," | grep -qiE '(^|,)research(,|$)'; then
+              if [ -z "${ACTIONS_CANON}" ]; then
+                ACTIONS_CANON="research"
+              else
+                ACTIONS_CANON="${ACTIONS_CANON},research"
+              fi
+            fi
+
+            # jqで安全にJSON生成
             jq -n \
               --arg queue_version "1" \
               --arg status "pending" \
@@ -122,22 +174,58 @@ jobs:
               --arg title "$TITLE" \
               --arg body_snippet "$BODY_SNIPPET" \
               --arg tag_keys "$TAG_KEYS" \
-              --arg actions "$ACTIONS" \
+              --arg actions "$ACTIONS_CANON" \
               --arg created_at_utc "$CREATED_AT_UTC" \
               --arg created_at_jst "$CREATED_AT_JST" \
               --arg enqueued_at_utc "$ENQUEUED_AT_UTC" \
+              --arg execution_mode "$EXECUTION_MODE" \
+              --arg orchestrator "claude-code" \
+              --arg providers_allowed_json "$PROVIDERS_ALLOWED" \
+              --arg providers_primary "$PROVIDERS_PRIMARY" \
+              --arg exec_strategy "$EXEC_STRATEGY" \
+              --argjson exec_parallelism "$EXEC_PARALLELISM" \
+              --argjson cooldown_minutes "$COOLDOWN_MIN" \
+              --argjson one_step_per_run "$ONE_STEP_PER_RUN" \
               '{
                 queue_version: ($queue_version | tonumber),
                 status: $status,
                 task_type: $task_type,
                 requested_action: $requested_action,
                 idea_id: $idea_id,
+
+                execution: {
+                  mode: $execution_mode,
+                  orchestrator: $orchestrator,
+                  strategy: $exec_strategy,
+                  parallelism: $exec_parallelism,
+                  one_step_per_run: $one_step_per_run,
+                  cooldown_minutes_between_steps: $cooldown_minutes,
+                  providers: {
+                    allowed: ($providers_allowed_json | fromjson),
+                    primary: $providers_primary
+                  }
+                },
+
+                methodology: {
+                  name: "three-step",
+                  version: 1,
+                  steps: ["step1","step2","step3"]
+                },
+
+                state: {
+                  status: "queued",
+                  current_step: "step1",
+                  completed_steps: [],
+                  next_eligible_at_utc: $enqueued_at_utc
+                },
+
                 source: {
                   repo: $source_repo,
                   path: $source_path,
                   commit_sha: $source_commit_sha,
                   url: $source_url
                 },
+
                 idea: {
                   title: $title,
                   body_snippet: (if $body_snippet == "" then null else $body_snippet end),
@@ -146,6 +234,7 @@ jobs:
                   created_at_utc: (if $created_at_utc == "" then null else $created_at_utc end),
                   created_at_jst: (if $created_at_jst == "" then null else $created_at_jst end)
                 },
+
                 enqueue: {
                   enqueued_at_utc: $enqueued_at_utc,
                   trigger: "github_actions",
@@ -154,6 +243,7 @@ jobs:
               }' > "$QUEUE_PATH"
 
             echo "Wrote queue file: $QUEUE_PATH"
+            echo "Execution mode: $EXECUTION_MODE"
             QUEUE_CHANGED=true
           done <<< "$CHANGED_FILES"
 
@@ -172,5 +262,5 @@ jobs:
           git config user.name "GitHub Actions"
 
           git add research-queue
-          git commit -m "🧠 enqueue research requests"
+          git commit -m "🧠 enqueue research requests (heavy-aware)"
           git push
