@@ -1,0 +1,176 @@
+name: Enqueue Research Requests
+
+on:
+  push:
+    paths:
+      - 'ideas/**/*.md'
+  workflow_dispatch:
+
+jobs:
+  enqueue:
+    if: github.repository == 'h1rokun59/Mylife'
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Enqueue ideas with Actions: research
+        env:
+          BEFORE_SHA: ${{ github.event.before }}
+          CURRENT_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+
+          echo "Repository: $GITHUB_REPOSITORY"
+          echo "Before: ${BEFORE_SHA:-<none>}"
+          echo "Current: ${CURRENT_SHA:-<none>}"
+
+          # 変更された idea ファイルを取得（初回/特殊ケースにも対応）
+          if [ -z "${BEFORE_SHA:-}" ] || [ "${BEFORE_SHA}" = "0000000000000000000000000000000000000000" ]; then
+            CHANGED_FILES=$(git ls-files 'ideas/**/*.md' || true)
+          else
+            CHANGED_FILES=$(git diff --name-only "$BEFORE_SHA" "$CURRENT_SHA" -- 'ideas/**/*.md' || true)
+          fi
+
+          if [ -z "${CHANGED_FILES}" ]; then
+            echo "No changed idea files."
+            exit 0
+          fi
+
+          echo "Changed files:"
+          echo "${CHANGED_FILES}"
+
+          mkdir -p research-queue/pending
+
+          QUEUE_CHANGED=false
+
+          while IFS= read -r file; do
+            [ -z "$file" ] && continue
+            [ ! -f "$file" ] && { echo "Skipped (not found): $file"; continue; }
+
+            echo "----------------------------------------"
+            echo "Processing: $file"
+
+            # 機械可読メタデータを抽出（なければ空）
+            ACTIONS_LINE=$(grep -E '^\*\*Actions:\*\* ' "$file" || true)
+            TAG_KEYS_LINE=$(grep -E '^\*\*TagKeys:\*\* ' "$file" || true)
+            IDEA_ID_LINE=$(grep -E '^\*\*Idea-ID:\*\* ' "$file" || true)
+            CREATED_UTC_LINE=$(grep -E '^\*\*Created-At-UTC:\*\* ' "$file" || true)
+            CREATED_JST_LINE=$(grep -E '^\*\*Created-At-JST:\*\* ' "$file" || true)
+
+            ACTIONS=$(echo "$ACTIONS_LINE" | sed -E 's/^\*\*Actions:\*\* //')
+            TAG_KEYS=$(echo "$TAG_KEYS_LINE" | sed -E 's/^\*\*TagKeys:\*\* //')
+            IDEA_ID=$(echo "$IDEA_ID_LINE" | sed -E 's/^\*\*Idea-ID:\*\* //')
+            CREATED_AT_UTC=$(echo "$CREATED_UTC_LINE" | sed -E 's/^\*\*Created-At-UTC:\*\* //')
+            CREATED_AT_JST=$(echo "$CREATED_JST_LINE" | sed -E 's/^\*\*Created-At-JST:\*\* //')
+
+            echo "Actions: ${ACTIONS:-<none>}"
+            echo "TagKeys: ${TAG_KEYS:-<none>}"
+            echo "Idea-ID: ${IDEA_ID:-<none>}"
+
+            # research アクションが無ければスキップ
+            if ! echo ",${ACTIONS}," | grep -qiE '(^|,)research(,|$)'; then
+              echo "No research action. Skip."
+              continue
+            fi
+
+            # Idea-ID が無い旧フォーマットも一応対応（basename fallback）
+            if [ -z "${IDEA_ID}" ]; then
+              IDEA_ID="$(basename "$file" .md)"
+              echo "Fallback Idea-ID: ${IDEA_ID}"
+            fi
+
+            # 先頭見出しを取得（あれば）
+            TITLE=$(grep -m1 '^# ' "$file" | sed 's/^# //')
+            if [ -z "${TITLE}" ]; then
+              TITLE="(untitled idea)"
+            fi
+
+            # 本文スニペット（メタ行を除いた最初の非空行を雑に抽出）
+            BODY_SNIPPET=$(
+              awk '
+                BEGIN { in_body=0 }
+                /^---$/ { next }
+                /^\*Captured via Idea Capture App\*$/ { next }
+                /^# / { next }
+                /^\*\*[A-Za-z0-9-]+:\*\* / { next }
+                /^[[:space:]]*$/ { next }
+                { print; exit }
+              ' "$file"
+            )
+
+            QUEUE_PATH="research-queue/pending/${IDEA_ID}.json"
+            SOURCE_URL="https://github.com/${GITHUB_REPOSITORY}/blob/${CURRENT_SHA}/${file}"
+            ENQUEUED_AT_UTC="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+
+            # jqで安全にJSON生成（ubuntu-latest で利用可）
+            jq -n \
+              --arg queue_version "1" \
+              --arg status "pending" \
+              --arg task_type "openclaw_research" \
+              --arg requested_action "research" \
+              --arg idea_id "$IDEA_ID" \
+              --arg source_repo "$GITHUB_REPOSITORY" \
+              --arg source_path "$file" \
+              --arg source_commit_sha "$CURRENT_SHA" \
+              --arg source_url "$SOURCE_URL" \
+              --arg title "$TITLE" \
+              --arg body_snippet "$BODY_SNIPPET" \
+              --arg tag_keys "$TAG_KEYS" \
+              --arg actions "$ACTIONS" \
+              --arg created_at_utc "$CREATED_AT_UTC" \
+              --arg created_at_jst "$CREATED_AT_JST" \
+              --arg enqueued_at_utc "$ENQUEUED_AT_UTC" \
+              '{
+                queue_version: ($queue_version | tonumber),
+                status: $status,
+                task_type: $task_type,
+                requested_action: $requested_action,
+                idea_id: $idea_id,
+                source: {
+                  repo: $source_repo,
+                  path: $source_path,
+                  commit_sha: $source_commit_sha,
+                  url: $source_url
+                },
+                idea: {
+                  title: $title,
+                  body_snippet: (if $body_snippet == "" then null else $body_snippet end),
+                  tag_keys: ($tag_keys | split(",") | map(select(length > 0))),
+                  actions: ($actions | split(",") | map(select(length > 0))),
+                  created_at_utc: (if $created_at_utc == "" then null else $created_at_utc end),
+                  created_at_jst: (if $created_at_jst == "" then null else $created_at_jst end)
+                },
+                enqueue: {
+                  enqueued_at_utc: $enqueued_at_utc,
+                  trigger: "github_actions",
+                  workflow: "enqueue-research.yml"
+                }
+              }' > "$QUEUE_PATH"
+
+            echo "Wrote queue file: $QUEUE_PATH"
+            QUEUE_CHANGED=true
+          done <<< "$CHANGED_FILES"
+
+          if [ "$QUEUE_CHANGED" != "true" ]; then
+            echo "No research queue entries generated."
+            exit 0
+          fi
+
+          # 変更がある場合のみコミット
+          if git diff --quiet -- research-queue; then
+            echo "No effective changes under research-queue."
+            exit 0
+          fi
+
+          git config user.email "actions@github.com"
+          git config user.name "GitHub Actions"
+
+          git add research-queue/pending/*.json
+          git commit -m "🧠 enqueue research requests"
+          git push
