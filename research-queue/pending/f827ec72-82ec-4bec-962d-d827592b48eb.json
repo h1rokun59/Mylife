@@ -1,0 +1,30 @@
+{
+  "queue_version": 1,
+  "status": "pending",
+  "task_type": "openclaw_research",
+  "requested_action": "research",
+  "idea_id": "f827ec72-82ec-4bec-962d-d827592b48eb",
+  "source": {
+    "repo": "h1rokun59/Mylife",
+    "path": "ideas/2026-02-23/2026-02-23T19-34-06.md",
+    "commit_sha": "a7ceed02ae510986b1cf3d96b6663cb68db4e0ca",
+    "url": "https://github.com/h1rokun59/Mylife/blob/a7ceed02ae510986b1cf3d96b6663cb68db4e0ca/ideas/2026-02-23/2026-02-23T19-34-06.md"
+  },
+  "idea": {
+    "title": "💡 2026-02-23 19:34:06",
+    "body_snippet": "まじ花粉やべー",
+    "tag_keys": [
+      "ai-ml"
+    ],
+    "actions": [
+      "research"
+    ],
+    "created_at_utc": "2026-02-23T10:34:06.416Z",
+    "created_at_jst": "2026-02-23 19:34:06"
+  },
+  "enqueue": {
+    "enqueued_at_utc": "2026-02-23T10:34:15Z",
+    "trigger": "github_actions",
+    "workflow": "enqueue-research.yml"
+  }
+}
