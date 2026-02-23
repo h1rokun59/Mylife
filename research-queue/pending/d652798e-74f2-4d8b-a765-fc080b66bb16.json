@@ -1,0 +1,59 @@
+{
+  "queue_version": 1,
+  "status": "pending",
+  "task_type": "openclaw_research",
+  "requested_action": "research",
+  "idea_id": "d652798e-74f2-4d8b-a765-fc080b66bb16",
+  "execution": {
+    "mode": "normal",
+    "orchestrator": "claude-code",
+    "strategy": "sequential",
+    "parallelism": 1,
+    "one_step_per_run": true,
+    "cooldown_minutes_between_steps": 15,
+    "providers": {
+      "allowed": [
+        "gemini"
+      ],
+      "primary": "gemini"
+    }
+  },
+  "methodology": {
+    "name": "three-step",
+    "version": 1,
+    "steps": [
+      "step1",
+      "step2",
+      "step3"
+    ]
+  },
+  "state": {
+    "status": "queued",
+    "current_step": "step1",
+    "completed_steps": [],
+    "next_eligible_at_utc": "2026-02-23T15:56:28Z"
+  },
+  "source": {
+    "repo": "h1rokun59/Mylife",
+    "path": "ideas/2026-02-24/2026-02-24T00-56-18.md",
+    "commit_sha": "594b987edab2e355d1f75537e22cc0776c2f9f18",
+    "url": "https://github.com/h1rokun59/Mylife/blob/594b987edab2e355d1f75537e22cc0776c2f9f18/ideas/2026-02-24/2026-02-24T00-56-18.md"
+  },
+  "idea": {
+    "title": "💡 2026-02-24 00:56:18",
+    "body_snippet": "フュージョンセンターは、すでに古い考えでしっかりした方針がないと単なるCyber Confusion Centerになってしまう。CFCではなくCyber Resilience Centerとして全社的レジリエンス向上の礎とする案を提案したい",
+    "tag_keys": [
+      "soc"
+    ],
+    "actions": [
+      "research"
+    ],
+    "created_at_utc": "2026-02-23T15:56:18.337Z",
+    "created_at_jst": "2026-02-24 00:56:18"
+  },
+  "enqueue": {
+    "enqueued_at_utc": "2026-02-23T15:56:28Z",
+    "trigger": "github_actions",
+    "workflow": "enqueue-research.yml"
+  }
+}
