@@ -1,0 +1,59 @@
+{
+  "queue_version": 1,
+  "status": "pending",
+  "task_type": "openclaw_research",
+  "requested_action": "research",
+  "idea_id": "da57dbc5-9432-444a-becf-65079aeb67be",
+  "execution": {
+    "mode": "normal",
+    "orchestrator": "claude-code",
+    "strategy": "sequential",
+    "parallelism": 1,
+    "one_step_per_run": true,
+    "cooldown_minutes_between_steps": 15,
+    "providers": {
+      "allowed": [
+        "gemini"
+      ],
+      "primary": "gemini"
+    }
+  },
+  "methodology": {
+    "name": "three-step",
+    "version": 1,
+    "steps": [
+      "step1",
+      "step2",
+      "step3"
+    ]
+  },
+  "state": {
+    "status": "queued",
+    "current_step": "step1",
+    "completed_steps": [],
+    "next_eligible_at_utc": "2026-02-23T12:38:12Z"
+  },
+  "source": {
+    "repo": "h1rokun59/Mylife",
+    "path": "ideas/2026-02-23/2026-02-23T21-38-04.md",
+    "commit_sha": "c5bafa5fc653a0b9d9eba72ebffbbc319daededb",
+    "url": "https://github.com/h1rokun59/Mylife/blob/c5bafa5fc653a0b9d9eba72ebffbbc319daededb/ideas/2026-02-23/2026-02-23T21-38-04.md"
+  },
+  "idea": {
+    "title": "💡 2026-02-23 21:38:04",
+    "body_snippet": "やっちゃうぞ！　オラやっちゃうぞ！",
+    "tag_keys": [
+      "process"
+    ],
+    "actions": [
+      "research"
+    ],
+    "created_at_utc": "2026-02-23T12:38:04.496Z",
+    "created_at_jst": "2026-02-23 21:38:04"
+  },
+  "enqueue": {
+    "enqueued_at_utc": "2026-02-23T12:38:12Z",
+    "trigger": "github_actions",
+    "workflow": "enqueue-research.yml"
+  }
+}
