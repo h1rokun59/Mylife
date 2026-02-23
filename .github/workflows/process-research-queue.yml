@@ -25,7 +25,11 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: "Process pending queue stepwise (mode-aware)"
+      - name: "Process pending queue stepwise (mode-aware) + Gemini step1 (normal)"
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GEMINI_MODEL_NORMAL: gemini-2.5-flash
+          GEMINI_THINKING_BUDGET: "-1"   # dynamic thinking
         run: |
           set -euo pipefail
 
@@ -46,6 +50,7 @@ jobs:
           mkdir -p research-queue/processed
 
           processed_any=false
+          GEMINI_CALLS_THIS_RUN=0
 
           to_epoch() {
             local iso="$1"
@@ -92,6 +97,69 @@ jobs:
             esac
           }
 
+          extract_idea_body() {
+            local path="$1"
+            if [ -z "$path" ] || [ ! -f "$path" ]; then
+              echo ""
+              return
+            fi
+            # メタ行やCaptured行を除いて本文だけを抽出（雑でOK）
+            awk '
+              /^---$/ { next }
+              /^\*Captured via Idea Capture App\*$/ { next }
+              /^# / { next }
+              /^\*\*[A-Za-z0-9-]+:\*\* / { next }
+              { print }
+            ' "$path"
+          }
+
+          gemini_generate_step1() {
+            local prompt="$1"
+            local model="${GEMINI_MODEL_NORMAL:-gemini-2.5-flash}"
+            local budget="${GEMINI_THINKING_BUDGET:--1}"
+
+            if [ -z "${GEMINI_API_KEY:-}" ]; then
+              echo "__ERROR__: GEMINI_API_KEY is not set"
+              return 2
+            fi
+
+            local req
+            req="$(jq -n \
+              --arg p "$prompt" \
+              --argjson b "$budget" \
+              '{
+                contents: [{ role: "user", parts: [{ text: $p }] }],
+                generationConfig: { thinkingConfig: { thinkingBudget: $b } }
+              }'
+            )"
+
+            local resp
+            resp="$(curl -sS \
+              -H "x-goog-api-key: ${GEMINI_API_KEY}" \
+              -H "Content-Type: application/json" \
+              -X POST \
+              "https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent" \
+              -d "$req" \
+            )" || { echo "__ERROR__: curl failed"; return 3; }
+
+            # APIエラー
+            if echo "$resp" | jq -e '.error' >/dev/null 2>&1; then
+              echo "__ERROR__: $(echo "$resp" | jq -r '.error.message // "unknown error"')"
+              return 4
+            fi
+
+            # テキスト抽出
+            local text
+            text="$(echo "$resp" | jq -r '[.candidates[0].content.parts[]?.text] | join("\n")' 2>/dev/null || true)"
+            if [ -z "$text" ] || [ "$text" = "null" ]; then
+              echo "__ERROR__: empty response text"
+              return 5
+            fi
+
+            printf '%s' "$text"
+            return 0
+          }
+
           echo "Pending queue files:"
           echo "${PENDING_FILES}"
 
@@ -116,7 +184,9 @@ jobs:
             TITLE=$(jq -r '.idea.title // ""' "$qfile")
             TAG_KEYS=$(jq -r '(.idea.tag_keys // []) | join(",")' "$qfile")
             ACTIONS=$(jq -r '(.idea.actions // []) | join(",")' "$qfile")
+
             SOURCE_URL=$(jq -r '.source.url // ""' "$qfile")
+            SOURCE_PATH=$(jq -r '.source.path // ""' "$qfile")
 
             if [ -z "$IDEA_ID" ]; then
               IDEA_ID="$(basename "$qfile" .json)"
@@ -131,6 +201,12 @@ jobs:
             NEXT_EPOCH="$(to_epoch "$NEXT_ELIGIBLE")"
             if [ "$NEXT_EPOCH" -gt "$NOW_EPOCH" ]; then
               echo "Skip: not eligible yet. next_eligible_at_utc=$NEXT_ELIGIBLE"
+              continue
+            fi
+
+            # free-tier運用：NormalのGemini呼び出しは1回/Runに制限
+            if [ "$MODE" = "normal" ] && [ "$CUR_STEP" = "step1" ] && [ "$GEMINI_CALLS_THIS_RUN" -ge 1 ]; then
+              echo "Skip: Gemini call limit reached for this run (1 call)."
               continue
             fi
 
@@ -150,27 +226,95 @@ jobs:
 
             echo "Mode=$MODE current_step=$CUR_STEP steps_to_run=${steps_to_run[*]}"
 
+            # 実行（Step1のみGemini）
             for s in "${steps_to_run[@]}"; do
               sf="$(step_file "$s")"
               step_path="${OUT_DIR}/${sf}"
 
-              write_md "$step_path" \
-                "# 🧩 ${s} (placeholder)" \
-                "" \
-                "**Idea-ID:** ${IDEA_ID}" \
-                "**Mode:** ${MODE}" \
-                "**Title:** ${TITLE}" \
-                "**TagKeys:** ${TAG_KEYS}" \
-                "**Actions:** ${ACTIONS}" \
-                "**Source:** ${SOURCE_URL}" \
-                "**Ran-At-UTC:** ${NOW_UTC}" \
-                "" \
-                "## Output (Dummy)" \
-                "- Placeholder step output." \
-                "- Later: Normal=Gemini Thinking, Super Heavy=Claude Code orchestration." \
-                "" \
-                "## Notes" \
-                "- Completed steps so far: ${COMPLETED}"
+              if [ "$MODE" = "normal" ] && [ "$s" = "step1" ]; then
+                IDEA_BODY="$(extract_idea_body "$SOURCE_PATH")"
+
+                PROMPT=$(cat <<'PROMPT_EOF'
+あなたはリサーチ支援AIです。いまから「3Step調査プロセスのStep1（論点整理＋調査設計）」だけを実施してください。
+
+制約:
+- いまは外部Web検索はしません（事実の断定より、調査設計と論点整理に集中）
+- 社内機密・固有名詞・個人情報は出力に含めない（与えられていても抽象化）
+- 不確実なことは「未確認」と明記
+- 出力はMarkdownのみ
+
+出力フォーマット:
+## TL;DR
+## 調査目的
+## スコープ / 非スコープ
+## 主要な論点（3〜7）
+## 仮説（あれば）
+## 収集すべき一次情報（カテゴリで：公式Doc/RFC/NIST/MITRE等）
+## 15分×3Step前提の進め方（Step1→Step2→Step3の要点）
+## 未確認点・リスク
+## 次アクション（具体的に）
+
+入力（アイデア）:
+PROMPT_EOF
+)
+
+                PROMPT="${PROMPT}\n\n- Title: ${TITLE}\n- TagKeys: ${TAG_KEYS}\n- Actions: ${ACTIONS}\n- Source: ${SOURCE_URL}\n\n---\n${IDEA_BODY}\n"
+
+                echo "Calling Gemini for step1... model=${GEMINI_MODEL_NORMAL:-gemini-2.5-flash}"
+                GEMINI_CALLS_THIS_RUN=$((GEMINI_CALLS_THIS_RUN + 1))
+
+                set +e
+                OUT="$(gemini_generate_step1 "$PROMPT")"
+                RC=$?
+                set -e
+
+                if [ $RC -ne 0 ] || echo "$OUT" | grep -q '^__ERROR__:'; then
+                  echo "Gemini error: $OUT"
+                  # 失敗したらplaceholderを書いて、ステップ遷移は止める（再実行で回復しやすい）
+                  write_md "$step_path" \
+                    "# 🧩 step1 (Gemini ERROR)" \
+                    "" \
+                    "**Idea-ID:** ${IDEA_ID}" \
+                    "**Mode:** ${MODE}" \
+                    "**Ran-At-UTC:** ${NOW_UTC}" \
+                    "" \
+                    "## Error" \
+                    "${OUT}" \
+                    "" \
+                    "## Action" \
+                    "- GEMINI_API_KEY / モデル名 / quota を確認して再実行してください。"
+                  # queueは更新しない（=次もstep1のまま）
+                  processed_any=true
+                  continue 2
+                fi
+
+                # 成功：Gemini出力をstep1.mdへ
+                mkdir -p "$(dirname "$step_path")"
+                {
+                  printf '# 🧩 step1 (Gemini Thinking)\n\n'
+                  printf '**Idea-ID:** %s\n' "$IDEA_ID"
+                  printf '**Mode:** %s\n' "$MODE"
+                  printf '**Ran-At-UTC:** %s\n\n' "$NOW_UTC"
+                  printf '%s\n' "$OUT"
+                } > "$step_path"
+
+              else
+                # step2/3 は今まで通り placeholder
+                write_md "$step_path" \
+                  "# 🧩 ${s} (placeholder)" \
+                  "" \
+                  "**Idea-ID:** ${IDEA_ID}" \
+                  "**Mode:** ${MODE}" \
+                  "**Title:** ${TITLE}" \
+                  "**TagKeys:** ${TAG_KEYS}" \
+                  "**Actions:** ${ACTIONS}" \
+                  "**Source:** ${SOURCE_URL}" \
+                  "**Ran-At-UTC:** ${NOW_UTC}" \
+                  "" \
+                  "## Output (Dummy)" \
+                  "- Placeholder step output." \
+                  "- Later: Normal=Gemini Thinking, Super Heavy=Claude Code orchestration."
+              fi
 
               if [ -z "$COMPLETED" ]; then
                 COMPLETED="$s"
@@ -195,14 +339,8 @@ jobs:
                 "**Completed-At-UTC:** ${NOW_UTC}" \
                 "" \
                 "## What happened" \
-                "- Stepwise pipeline executed all steps (placeholder)." \
-                "- Next: swap placeholders with real model execution." \
-                "" \
-                "## Files" \
-                "- 01-step1.md" \
-                "- 02-step2.md" \
-                "- 03-step3.md" \
-                "- meta.json"
+                "- Stepwise pipeline executed all steps (step1 may be Gemini, others placeholder)." \
+                "- Next: swap placeholders with real model execution for step2/3."
 
               jq -n \
                 --arg idea_id "$IDEA_ID" \
@@ -227,8 +365,8 @@ jobs:
                 | .state.next_eligible_at_utc = null
                 | .process = {
                     processed_at_utc: $processed_at_utc,
-                    worker: { name: "github-actions-stepwise-worker", version: 1 },
-                    mode: "placeholder"
+                    worker: { name: "github-actions-stepwise-worker", version: 2 },
+                    mode: "gemini-step1"
                   }
                 | .result = { dir: $result_dir, final: ($result_dir + "/final.md") }
                 ' "$qfile" > "$PROCESSED_Q"
@@ -283,9 +421,8 @@ jobs:
           git config user.name "GitHub Actions"
 
           git add research-queue research-results
-          git commit -m "🤖 stepwise process research queue (mode-aware)" || echo "Nothing to commit."
+          git commit -m "🤖 stepwise process research queue (gemini step1)" || echo "Nothing to commit."
 
-          # mainへのpush競合回避（fetch+rebase+push リトライ）
           for i in 1 2 3; do
             echo "Push attempt $i..."
             git fetch origin main
