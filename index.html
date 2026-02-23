@@ -312,21 +312,29 @@
     const ideaId = generateIdeaId();
 
     const tagLine = categoryTags.length > 0
-      ? `\n**Tags:** ${categoryTags.map(t => t.label).join(' ')}`
+      ? `**Tags:** ${categoryTags.map(t => t.label).join(' ')}`
       : '';
 
     const tagKeysLine = categoryTags.length > 0
-      ? `\n**TagKeys:** ${categoryTags.map(t => t.key).join(',')}`
+      ? `**TagKeys:** ${categoryTags.map(t => t.key).join(',')}`
       : '';
 
     const actionsLine = actionTags.length > 0
-      ? `\n**Actions:** ${actionTags.map(t => t.key).join(',')}`
+      ? `**Actions:** ${actionTags.map(t => t.key).join(',')}`
       : '';
 
+    const metadataLines = [
+      `**Idea-ID:** ${ideaId}`,
+      `**Created-At-UTC:** ${nowUtc}`,
+      `**Created-At-JST:** ${nowJst}`,
+      tagLine,
+      tagKeysLine,
+      actionsLine
+    ].filter(Boolean).join('\n');
+
     const content = `# 💡 ${nowJst}
-**Idea-ID:** ${ideaId}
-**Created-At-UTC:** ${nowUtc}
-**Created-At-JST:** ${nowJst}${tagLine}${tagKeysLine}${actionsLine}
+
+${metadataLines}
 
 ${text}
 
