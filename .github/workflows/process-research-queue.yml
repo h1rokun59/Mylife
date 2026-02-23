@@ -103,7 +103,6 @@ jobs:
               echo ""
               return
             fi
-            # メタ行やCaptured行を除いて本文だけを抽出（雑でOK）
             awk '
               /^---$/ { next }
               /^\*Captured via Idea Capture App\*$/ { next }
@@ -139,16 +138,14 @@ jobs:
               -H "Content-Type: application/json" \
               -X POST \
               "https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent" \
-              -d "$req" \
+              -d "$req"
             )" || { echo "__ERROR__: curl failed"; return 3; }
 
-            # APIエラー
             if echo "$resp" | jq -e '.error' >/dev/null 2>&1; then
               echo "__ERROR__: $(echo "$resp" | jq -r '.error.message // "unknown error"')"
               return 4
             fi
 
-            # テキスト抽出
             local text
             text="$(echo "$resp" | jq -r '[.candidates[0].content.parts[]?.text] | join("\n")' 2>/dev/null || true)"
             if [ -z "$text" ] || [ "$text" = "null" ]; then
@@ -204,7 +201,6 @@ jobs:
               continue
             fi
 
-            # free-tier運用：NormalのGemini呼び出しは1回/Runに制限
             if [ "$MODE" = "normal" ] && [ "$CUR_STEP" = "step1" ] && [ "$GEMINI_CALLS_THIS_RUN" -ge 1 ]; then
               echo "Skip: Gemini call limit reached for this run (1 call)."
               continue
@@ -226,7 +222,6 @@ jobs:
 
             echo "Mode=$MODE current_step=$CUR_STEP steps_to_run=${steps_to_run[*]}"
 
-            # 実行（Step1のみGemini）
             for s in "${steps_to_run[@]}"; do
               sf="$(step_file "$s")"
               step_path="${OUT_DIR}/${sf}"
@@ -234,31 +229,38 @@ jobs:
               if [ "$MODE" = "normal" ] && [ "$s" = "step1" ]; then
                 IDEA_BODY="$(extract_idea_body "$SOURCE_PATH")"
 
-                PROMPT=$(cat <<'PROMPT_EOF'
-あなたはリサーチ支援AIです。いまから「3Step調査プロセスのStep1（論点整理＋調査設計）」だけを実施してください。
-
-制約:
-- いまは外部Web検索はしません（事実の断定より、調査設計と論点整理に集中）
-- 社内機密・固有名詞・個人情報は出力に含めない（与えられていても抽象化）
-- 不確実なことは「未確認」と明記
-- 出力はMarkdownのみ
-
-出力フォーマット:
-## TL;DR
-## 調査目的
-## スコープ / 非スコープ
-## 主要な論点（3〜7）
-## 仮説（あれば）
-## 収集すべき一次情報（カテゴリで：公式Doc/RFC/NIST/MITRE等）
-## 15分×3Step前提の進め方（Step1→Step2→Step3の要点）
-## 未確認点・リスク
-## 次アクション（具体的に）
-
-入力（アイデア）:
-PROMPT_EOF
-)
-
-                PROMPT="${PROMPT}\n\n- Title: ${TITLE}\n- TagKeys: ${TAG_KEYS}\n- Actions: ${ACTIONS}\n- Source: ${SOURCE_URL}\n\n---\n${IDEA_BODY}\n"
+                # heredoc禁止：printfでプロンプトを組み立て（YAML事故回避）
+                PROMPT="$(
+                  {
+                    printf '%s\n' 'あなたはリサーチ支援AIです。いまから「3Step調査プロセスのStep1（論点整理＋調査設計）」だけを実施してください。'
+                    printf '\n'
+                    printf '%s\n' '制約:'
+                    printf '%s\n' '- いまは外部Web検索はしません（事実の断定より、調査設計と論点整理に集中）'
+                    printf '%s\n' '- 社内機密・固有名詞・個人情報は出力に含めない（与えられていても抽象化）'
+                    printf '%s\n' '- 不確実なことは「未確認」と明記'
+                    printf '%s\n' '- 出力はMarkdownのみ'
+                    printf '\n'
+                    printf '%s\n' '出力フォーマット:'
+                    printf '%s\n' '## TL;DR'
+                    printf '%s\n' '## 調査目的'
+                    printf '%s\n' '## スコープ / 非スコープ'
+                    printf '%s\n' '## 主要な論点（3〜7）'
+                    printf '%s\n' '## 仮説（あれば）'
+                    printf '%s\n' '## 収集すべき一次情報（カテゴリで：公式Doc/RFC/NIST/MITRE等）'
+                    printf '%s\n' '## 15分×3Step前提の進め方（Step1→Step2→Step3の要点）'
+                    printf '%s\n' '## 未確認点・リスク'
+                    printf '%s\n' '## 次アクション（具体的に）'
+                    printf '\n'
+                    printf '%s\n' '入力（アイデア）:'
+                    printf '%s\n' "- Title: ${TITLE}"
+                    printf '%s\n' "- TagKeys: ${TAG_KEYS}"
+                    printf '%s\n' "- Actions: ${ACTIONS}"
+                    printf '%s\n' "- Source: ${SOURCE_URL}"
+                    printf '\n'
+                    printf '%s\n' '---'
+                    printf '%s\n' "${IDEA_BODY}"
+                  }
+                )"
 
                 echo "Calling Gemini for step1... model=${GEMINI_MODEL_NORMAL:-gemini-2.5-flash}"
                 GEMINI_CALLS_THIS_RUN=$((GEMINI_CALLS_THIS_RUN + 1))
@@ -270,7 +272,6 @@ PROMPT_EOF
 
                 if [ $RC -ne 0 ] || echo "$OUT" | grep -q '^__ERROR__:'; then
                   echo "Gemini error: $OUT"
-                  # 失敗したらplaceholderを書いて、ステップ遷移は止める（再実行で回復しやすい）
                   write_md "$step_path" \
                     "# 🧩 step1 (Gemini ERROR)" \
                     "" \
@@ -283,12 +284,10 @@ PROMPT_EOF
                     "" \
                     "## Action" \
                     "- GEMINI_API_KEY / モデル名 / quota を確認して再実行してください。"
-                  # queueは更新しない（=次もstep1のまま）
                   processed_any=true
                   continue 2
                 fi
 
-                # 成功：Gemini出力をstep1.mdへ
                 mkdir -p "$(dirname "$step_path")"
                 {
                   printf '# 🧩 step1 (Gemini Thinking)\n\n'
@@ -299,7 +298,6 @@ PROMPT_EOF
                 } > "$step_path"
 
               else
-                # step2/3 は今まで通り placeholder
                 write_md "$step_path" \
                   "# 🧩 ${s} (placeholder)" \
                   "" \
