@@ -1,0 +1,30 @@
+{
+  "queue_version": 1,
+  "status": "pending",
+  "task_type": "openclaw_research",
+  "requested_action": "research",
+  "idea_id": "6b0749f0-4759-4c79-a79b-3de6b5b1ddda",
+  "source": {
+    "repo": "h1rokun59/Mylife",
+    "path": "ideas/2026-02-23/2026-02-23T19-46-44.md",
+    "commit_sha": "84388be3b1c2e8eb7d8194bd492d02517670e89a",
+    "url": "https://github.com/h1rokun59/Mylife/blob/84388be3b1c2e8eb7d8194bd492d02517670e89a/ideas/2026-02-23/2026-02-23T19-46-44.md"
+  },
+  "idea": {
+    "title": "💡 2026-02-23 19:46:44",
+    "body_snippet": "鼻が詰まるね辛いよね",
+    "tag_keys": [
+      "process"
+    ],
+    "actions": [
+      "research"
+    ],
+    "created_at_utc": "2026-02-23T10:46:44.139Z",
+    "created_at_jst": "2026-02-23 19:46:44"
+  },
+  "enqueue": {
+    "enqueued_at_utc": "2026-02-23T10:46:53Z",
+    "trigger": "github_actions",
+    "workflow": "enqueue-research.yml"
+  }
+}
