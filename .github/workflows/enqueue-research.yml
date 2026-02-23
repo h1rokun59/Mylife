@@ -6,6 +6,10 @@ on:
       - 'ideas/**/*.md'
   workflow_dispatch:
 
+concurrency:
+  group: mylife-main-writes
+  cancel-in-progress: false
+
 jobs:
   enqueue:
     if: github.repository == 'h1rokun59/Mylife'
@@ -17,7 +21,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 2
+          fetch-depth: 0
 
       - name: "Enqueue ideas with Actions: research (heavy-aware)"
         env:
@@ -87,7 +91,6 @@ jobs:
               HAS_HEAVY=true
             fi
 
-            # heavyだけ入ってるケースはresearch扱いで通す
             if [ "$HAS_HEAVY" = true ] && [ "$HAS_RESEARCH" = false ]; then
               HAS_RESEARCH=true
             fi
@@ -160,7 +163,6 @@ jobs:
               fi
             fi
 
-            # jqで安全にJSON生成
             jq -n \
               --arg queue_version "1" \
               --arg status "pending" \
@@ -252,7 +254,6 @@ jobs:
             exit 0
           fi
 
-          # 変更がある場合のみコミット（untracked も含めて判定）
           if [ -z "$(git status --porcelain -- research-queue)" ]; then
             echo "No effective changes under research-queue."
             exit 0
@@ -262,5 +263,21 @@ jobs:
           git config user.name "GitHub Actions"
 
           git add research-queue
-          git commit -m "🧠 enqueue research requests (heavy-aware)"
-          git push
+          git commit -m "🧠 enqueue research requests (heavy-aware)" || echo "Nothing to commit."
+
+          # mainへのpush競合回避（fetch+rebase+push リトライ）
+          for i in 1 2 3; do
+            echo "Push attempt $i..."
+            git fetch origin main
+            if git rebase origin/main; then
+              if git push; then
+                echo "Push succeeded."
+                break
+              fi
+            else
+              echo "Rebase failed, aborting rebase."
+              git rebase --abort || true
+            fi
+            echo "Push failed, retrying..."
+            sleep $((i * 2))
+          done
