@@ -1,0 +1,60 @@
+{
+  "queue_version": 1,
+  "status": "pending",
+  "task_type": "openclaw_research",
+  "requested_action": "research",
+  "idea_id": "c2717d1c-d463-4f1f-a87c-ac815a250e2b",
+  "execution": {
+    "mode": "super-heavy",
+    "orchestrator": "claude-code",
+    "strategy": "stepwise-parallel",
+    "parallelism": 3,
+    "one_step_per_run": false,
+    "cooldown_minutes_between_steps": 0,
+    "providers": {
+      "allowed": [
+        "chatgpt",
+        "claude",
+        "gemini"
+      ],
+      "primary": "claude"
+    }
+  },
+  "methodology": {
+    "name": "three-step",
+    "version": 1,
+    "steps": [
+      "step1",
+      "step2",
+      "step3"
+    ]
+  },
+  "state": {
+    "status": "queued",
+    "current_step": "step1",
+    "completed_steps": [],
+    "next_eligible_at_utc": "2026-02-23T12:21:35Z"
+  },
+  "source": {
+    "repo": "h1rokun59/Mylife",
+    "path": "ideas/2026-02-23/2026-02-23T21-21-26.md",
+    "commit_sha": "a7ce9a2b7a9ba3ed4e194f5f04e1ac70fb2d7b66",
+    "url": "https://github.com/h1rokun59/Mylife/blob/a7ce9a2b7a9ba3ed4e194f5f04e1ac70fb2d7b66/ideas/2026-02-23/2026-02-23T21-21-26.md"
+  },
+  "idea": {
+    "title": "💡 2026-02-23 21:21:26",
+    "body_snippet": "ヘビーってね5555なんだよ。あいつは強かった",
+    "tag_keys": [],
+    "actions": [
+      "research",
+      "heavy"
+    ],
+    "created_at_utc": "2026-02-23T12:21:26.641Z",
+    "created_at_jst": "2026-02-23 21:21:26"
+  },
+  "enqueue": {
+    "enqueued_at_utc": "2026-02-23T12:21:35Z",
+    "trigger": "github_actions",
+    "workflow": "enqueue-research.yml"
+  }
+}
