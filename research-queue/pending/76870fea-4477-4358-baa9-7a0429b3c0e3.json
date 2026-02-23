@@ -1,0 +1,30 @@
+{
+  "queue_version": 1,
+  "status": "pending",
+  "task_type": "openclaw_research",
+  "requested_action": "research",
+  "idea_id": "76870fea-4477-4358-baa9-7a0429b3c0e3",
+  "source": {
+    "repo": "h1rokun59/Mylife",
+    "path": "ideas/2026-02-23/2026-02-23T19-25-52.md",
+    "commit_sha": "3aaf700165d57df2e269f112322545548c921e55",
+    "url": "https://github.com/h1rokun59/Mylife/blob/3aaf700165d57df2e269f112322545548c921e55/ideas/2026-02-23/2026-02-23T19-25-52.md"
+  },
+  "idea": {
+    "title": "💡 2026-02-23 19:25:52",
+    "body_snippet": "定規発見",
+    "tag_keys": [
+      "process"
+    ],
+    "actions": [
+      "research"
+    ],
+    "created_at_utc": "2026-02-23T10:25:52.277Z",
+    "created_at_jst": "2026-02-23 19:25:52"
+  },
+  "enqueue": {
+    "enqueued_at_utc": "2026-02-23T10:26:03Z",
+    "trigger": "github_actions",
+    "workflow": "enqueue-research.yml"
+  }
+}
