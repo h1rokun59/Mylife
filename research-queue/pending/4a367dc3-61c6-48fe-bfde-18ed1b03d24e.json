@@ -1,0 +1,59 @@
+{
+  "queue_version": 1,
+  "status": "pending",
+  "task_type": "openclaw_research",
+  "requested_action": "research",
+  "idea_id": "4a367dc3-61c6-48fe-bfde-18ed1b03d24e",
+  "execution": {
+    "mode": "normal",
+    "orchestrator": "claude-code",
+    "strategy": "sequential",
+    "parallelism": 1,
+    "one_step_per_run": true,
+    "cooldown_minutes_between_steps": 15,
+    "providers": {
+      "allowed": [
+        "gemini"
+      ],
+      "primary": "gemini"
+    }
+  },
+  "methodology": {
+    "name": "three-step",
+    "version": 1,
+    "steps": [
+      "step1",
+      "step2",
+      "step3"
+    ]
+  },
+  "state": {
+    "status": "queued",
+    "current_step": "step1",
+    "completed_steps": [],
+    "next_eligible_at_utc": "2026-02-23T14:25:01Z"
+  },
+  "source": {
+    "repo": "h1rokun59/Mylife",
+    "path": "ideas/2026-02-23/2026-02-23T23-24-50.md",
+    "commit_sha": "8852db34bb838bfe8b4059dc8ebacfd43468c3cd",
+    "url": "https://github.com/h1rokun59/Mylife/blob/8852db34bb838bfe8b4059dc8ebacfd43468c3cd/ideas/2026-02-23/2026-02-23T23-24-50.md"
+  },
+  "idea": {
+    "title": "💡 2026-02-23 23:24:50",
+    "body_snippet": "次世代SOCとは、あなたが思うてんこ盛りバージョンで",
+    "tag_keys": [
+      "soc"
+    ],
+    "actions": [
+      "research"
+    ],
+    "created_at_utc": "2026-02-23T14:24:50.264Z",
+    "created_at_jst": "2026-02-23 23:24:50"
+  },
+  "enqueue": {
+    "enqueued_at_utc": "2026-02-23T14:25:01Z",
+    "trigger": "github_actions",
+    "workflow": "enqueue-research.yml"
+  }
+}
