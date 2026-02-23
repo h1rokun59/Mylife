@@ -1,9 +1,11 @@
-name: Process Research Queue (Dummy Worker)
+name: Process Research Queue (Stepwise Worker)
 
 on:
   workflow_run:
     workflows: ["Enqueue Research Requests"]
     types: [completed]
+  schedule:
+    - cron: "*/5 * * * *"   # 5分おきに見回る（cooldownはqueueのnext_eligibleで制御）
   workflow_dispatch:
 
 jobs:
@@ -19,12 +21,16 @@ jobs:
         with:
           fetch-depth: 2
 
-      - name: "Process all pending research queue files"
+      - name: "Process pending queue stepwise (mode-aware)"
         run: |
           set -euo pipefail
 
           echo "Repository: $GITHUB_REPOSITORY"
           echo "Event: $GITHUB_EVENT_NAME"
+
+          NOW_EPOCH="$(date -u +%s)"
+          NOW_UTC="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+          echo "NOW_UTC=$NOW_UTC"
 
           PENDING_FILES=$(git ls-files 'research-queue/pending/*.json' || true)
           if [ -z "${PENDING_FILES}" ]; then
@@ -32,129 +38,259 @@ jobs:
             exit 0
           fi
 
-          echo "Pending queue files:"
-          echo "${PENDING_FILES}"
-
           mkdir -p research-results
           mkdir -p research-queue/processed
 
-          ANY_PROCESSED=false
+          processed_any=false
 
-          while IFS= read -r file; do
-            [ -z "$file" ] && continue
-            [ ! -f "$file" ] && { echo "Skipped (not found): $file"; continue; }
+          # helper: safe epoch parse
+          to_epoch() {
+            local iso="$1"
+            if [ -z "$iso" ] || [ "$iso" = "null" ]; then
+              echo "0"
+              return
+            fi
+            date -u -d "$iso" +%s 2>/dev/null || echo "0"
+          }
+
+          # helper: add minutes to NOW_UTC
+          add_minutes() {
+            local minutes="$1"
+            date -u -d "${NOW_UTC} + ${minutes} minutes" +"%Y-%m-%dT%H:%M:%SZ"
+          }
+
+          # helper: write a markdown file safely
+          write_md() {
+            local path="$1"
+            shift
+            mkdir -p "$(dirname "$path")"
+            {
+              for line in "$@"; do
+                printf '%s\n' "$line"
+              done
+            } > "$path"
+          }
+
+          # map step name -> file prefix
+          step_file() {
+            local step="$1"
+            case "$step" in
+              step1) echo "01-step1.md" ;;
+              step2) echo "02-step2.md" ;;
+              step3) echo "03-step3.md" ;;
+              *) echo "00-unknown.md" ;;
+            esac
+          }
+
+          # determine next step
+          next_step() {
+            local step="$1"
+            case "$step" in
+              step1) echo "step2" ;;
+              step2) echo "step3" ;;
+              step3) echo "" ;;
+              *) echo "" ;;
+            esac
+          }
+
+          echo "Pending queue files:"
+          echo "${PENDING_FILES}"
+
+          while IFS= read -r qfile; do
+            [ -z "$qfile" ] && continue
+            [ ! -f "$qfile" ] && { echo "Skipped (not found): $qfile"; continue; }
 
             echo "----------------------------------------"
-            echo "Processing queue file: $file"
+            echo "Queue: $qfile"
 
-            STATUS=$(jq -r '.status // ""' "$file")
-            IDEA_ID=$(jq -r '.idea_id // ""' "$file")
+            IDEA_ID=$(jq -r '.idea_id // ""' "$qfile")
+            STATUS=$(jq -r '.status // ""' "$qfile")
 
-            SOURCE_REPO=$(jq -r '.source.repo // ""' "$file")
-            SOURCE_PATH=$(jq -r '.source.path // ""' "$file")
-            SOURCE_URL=$(jq -r '.source.url // ""' "$file")
-            SOURCE_COMMIT=$(jq -r '.source.commit_sha // ""' "$file")
+            MODE=$(jq -r '.execution.mode // "normal"' "$qfile")
+            ONE_STEP_PER_RUN=$(jq -r '.execution.one_step_per_run // true' "$qfile")
+            COOLDOWN_MIN=$(jq -r '.execution.cooldown_minutes_between_steps // 15' "$qfile")
 
-            TITLE=$(jq -r '.idea.title // ""' "$file")
-            BODY_SNIPPET=$(jq -r '.idea.body_snippet // ""' "$file")
-            CREATED_AT_UTC=$(jq -r '.idea.created_at_utc // ""' "$file")
-            CREATED_AT_JST=$(jq -r '.idea.created_at_jst // ""' "$file")
+            CUR_STEP=$(jq -r '.state.current_step // "step1"' "$qfile")
+            NEXT_ELIGIBLE=$(jq -r '.state.next_eligible_at_utc // ""' "$qfile")
+            COMPLETED=$(jq -r '(.state.completed_steps // []) | join(",")' "$qfile")
 
-            TAG_KEYS_CSV=$(jq -r '(.idea.tag_keys // []) | join(",")' "$file")
-            ACTIONS_CSV=$(jq -r '(.idea.actions // []) | join(",")' "$file")
+            TITLE=$(jq -r '.idea.title // ""' "$qfile")
+            TAG_KEYS=$(jq -r '(.idea.tag_keys // []) | join(",")' "$qfile")
+            ACTIONS=$(jq -r '(.idea.actions // []) | join(",")' "$qfile")
+            SOURCE_URL=$(jq -r '.source.url // ""' "$qfile")
 
-            echo "Status: ${STATUS:-<none>}"
-            echo "Idea-ID: ${IDEA_ID:-<none>}"
+            if [ -z "$IDEA_ID" ]; then
+              IDEA_ID="$(basename "$qfile" .json)"
+              echo "Fallback Idea-ID=$IDEA_ID"
+            fi
 
             if [ "$STATUS" != "pending" ]; then
-              echo "Skip: status is not pending."
+              echo "Skip: status=$STATUS (expected pending)"
               continue
             fi
 
-            if [ -z "$IDEA_ID" ]; then
-              IDEA_ID="$(basename "$file" .json)"
-              echo "Fallback Idea-ID: $IDEA_ID"
+            # cooldown gate
+            NEXT_EPOCH="$(to_epoch "$NEXT_ELIGIBLE")"
+            if [ "$NEXT_EPOCH" -gt "$NOW_EPOCH" ]; then
+              echo "Skip: not eligible yet. next_eligible_at_utc=$NEXT_ELIGIBLE"
+              continue
             fi
 
-            if [ -z "$TITLE" ]; then
-              TITLE="(untitled idea)"
+            # output folder per idea
+            OUT_DIR="research-results/${IDEA_ID}"
+            mkdir -p "$OUT_DIR"
+
+            # Decide how many steps to run this time
+            # - normal: 1 step per run (ONE_STEP_PER_RUN=true, cooldown>0)
+            # - super-heavy: run all remaining steps in one go (ONE_STEP_PER_RUN=false, cooldown=0)
+            steps_to_run=()
+            if [ "$MODE" = "super-heavy" ] && [ "$ONE_STEP_PER_RUN" = "false" ]; then
+              # run from current to end
+              s="$CUR_STEP"
+              while [ -n "$s" ]; do
+                steps_to_run+=("$s")
+                s="$(next_step "$s")"
+              done
+            else
+              steps_to_run+=("$CUR_STEP")
             fi
 
-            PROCESSED_AT_UTC="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
-            RESULT_PATH="research-results/${IDEA_ID}.md"
-            PROCESSED_QUEUE_PATH="research-queue/processed/${IDEA_ID}.json"
+            echo "Mode=$MODE current_step=$CUR_STEP steps_to_run=${steps_to_run[*]}"
 
-            {
-              printf '%s\n' '# 🔎 Research Result (Dummy)'
-              printf '\n'
-              printf '%s\n' "**Idea-ID:** ${IDEA_ID}"
-              printf '%s\n' "**Status:** done (dummy worker)"
-              printf '%s\n' "**Processed-At-UTC:** ${PROCESSED_AT_UTC}"
-              printf '\n'
-              printf '%s\n' '## Source'
-              printf '%s\n' "- **Repo:** ${SOURCE_REPO}"
-              printf '%s\n' "- **Path:** ${SOURCE_PATH}"
-              printf '%s\n' "- **Commit:** ${SOURCE_COMMIT}"
-              printf '%s\n' "- **URL:** ${SOURCE_URL}"
-              printf '\n'
-              printf '%s\n' '## Idea Metadata'
-              printf '%s\n' "- **Title:** ${TITLE}"
-              printf '%s\n' "- **TagKeys:** ${TAG_KEYS_CSV}"
-              printf '%s\n' "- **Actions:** ${ACTIONS_CSV}"
-              printf '%s\n' "- **Created-At-UTC:** ${CREATED_AT_UTC}"
-              printf '%s\n' "- **Created-At-JST:** ${CREATED_AT_JST}"
-              printf '\n'
-              printf '%s\n' '## Snippet'
-              printf '%s\n' "${BODY_SNIPPET:-"(no snippet)"}"
-              printf '\n'
-              printf '%s\n' '## Dummy Analysis Summary'
-              printf '%s\n' '- This is a placeholder result generated by GitHub Actions.'
-              printf '%s\n' '- Queue ingestion and processing pipeline is working.'
-              printf '%s\n' '- Next step: replace this dummy worker with OpenClaw execution.'
-              printf '\n'
-              printf '%s\n' '## Suggested Next Research Plan'
-              printf '%s\n' '1. Clarify the research question and expected output format'
-              printf '%s\n' '2. Gather primary sources and recent references'
-              printf '%s\n' '3. Summarize findings with citations'
-              printf '%s\n' '4. Save structured output for follow-up automation'
-            } > "$RESULT_PATH"
+            # run steps (dummy for now; later replace with Gemini/Claude Code)
+            for s in "${steps_to_run[@]}"; do
+              sf="$(step_file "$s")"
+              step_path="${OUT_DIR}/${sf}"
 
-            jq \
-              --arg processed_at_utc "$PROCESSED_AT_UTC" \
-              --arg result_path "$RESULT_PATH" \
-              --arg worker_name "github-actions-dummy-worker" \
-              --arg worker_version "1" \
-              '
-              .status = "done"
-              | .process = {
-                  processed_at_utc: $processed_at_utc,
-                  worker: {
-                    name: $worker_name,
-                    version: ($worker_version | tonumber)
-                  },
-                  mode: "dummy"
-                }
-              | .result = {
-                  path: $result_path,
-                  summary: "Dummy result created by GitHub Actions"
-                }
-              ' "$file" > "$PROCESSED_QUEUE_PATH"
+              write_md "$step_path" \
+                "# 🧩 ${s} (placeholder)" \
+                "" \
+                "**Idea-ID:** ${IDEA_ID}" \
+                "**Mode:** ${MODE}" \
+                "**Title:** ${TITLE}" \
+                "**TagKeys:** ${TAG_KEYS}" \
+                "**Actions:** ${ACTIONS}" \
+                "**Source:** ${SOURCE_URL}" \
+                "**Ran-At-UTC:** ${NOW_UTC}" \
+                "" \
+                "## Output (Dummy)" \
+                "- This is a placeholder step output." \
+                "- Next: replace this block with Gemini (Normal) or multi-model (Super Heavy) execution." \
+                "" \
+                "## Notes" \
+                "- Completed steps so far: ${COMPLETED}"
 
-            git rm -f "$file"
+              # update completed_steps in-memory string (for log only)
+              if [ -z "$COMPLETED" ]; then
+                COMPLETED="$s"
+              else
+                COMPLETED="${COMPLETED},$s"
+              fi
+            done
 
-            echo "Created result: $RESULT_PATH"
-            echo "Moved queue to processed: $PROCESSED_QUEUE_PATH"
+            # determine new state after running
+            LAST_STEP_RUN="${steps_to_run[-1]}"
+            NEXT_STEP="$(next_step "$LAST_STEP_RUN")"
 
-            ANY_PROCESSED=true
+            if [ -z "$NEXT_STEP" ]; then
+              # Done: write final + meta, move queue to processed
+              FINAL_PATH="${OUT_DIR}/final.md"
+              META_PATH="${OUT_DIR}/meta.json"
+              PROCESSED_Q="research-queue/processed/${IDEA_ID}.json"
+
+              write_md "$FINAL_PATH" \
+                "# ✅ Research Result (Final - placeholder)" \
+                "" \
+                "**Idea-ID:** ${IDEA_ID}" \
+                "**Mode:** ${MODE}" \
+                "**Completed-At-UTC:** ${NOW_UTC}" \
+                "" \
+                "## What happened" \
+                "- Stepwise pipeline executed all steps and produced placeholder outputs." \
+                "- Next: swap step placeholders with real Gemini/Claude Code execution." \
+                "" \
+                "## Files" \
+                "- 01-step1.md" \
+                "- 02-step2.md" \
+                "- 03-step3.md" \
+                "- meta.json"
+
+              jq -n \
+                --arg idea_id "$IDEA_ID" \
+                --arg mode "$MODE" \
+                --arg completed_at_utc "$NOW_UTC" \
+                --arg out_dir "$OUT_DIR" \
+                '{
+                  idea_id: $idea_id,
+                  mode: $mode,
+                  completed_at_utc: $completed_at_utc,
+                  output_dir: $out_dir,
+                  files: ["01-step1.md","02-step2.md","03-step3.md","final.md"]
+                }' > "$META_PATH"
+
+              # update queue JSON -> processed
+              jq \
+                --arg processed_at_utc "$NOW_UTC" \
+                --arg result_dir "$OUT_DIR" \
+                '
+                .status = "done"
+                | .state.status = "done"
+                | .state.current_step = null
+                | .state.next_eligible_at_utc = null
+                | .process = {
+                    processed_at_utc: $processed_at_utc,
+                    worker: { name: "github-actions-stepwise-worker", version: 1 },
+                    mode: "placeholder"
+                  }
+                | .result = { dir: $result_dir, final: ($result_dir + "/final.md") }
+                ' "$qfile" > "$PROCESSED_Q"
+
+              git rm -f "$qfile"
+
+              echo "DONE: ${IDEA_ID} -> ${OUT_DIR} , queue moved to processed"
+              processed_any=true
+            else
+              # Not done: update queue JSON in place (pending)
+              # next eligible time = now + cooldown (normal: 15m, heavy: 0)
+              next_eligible="$NOW_UTC"
+              if [ "$COOLDOWN_MIN" != "0" ] && [ "$COOLDOWN_MIN" != "null" ]; then
+                next_eligible="$(add_minutes "$COOLDOWN_MIN")"
+              fi
+
+              tmp="/tmp/${IDEA_ID}.json"
+              jq \
+                --arg now "$NOW_UTC" \
+                --arg next_step "$NEXT_STEP" \
+                --arg next_eligible "$next_eligible" \
+                --arg mode "$MODE" \
+                '
+                .status = "pending"
+                | .execution.mode = $mode
+                | .state.status = "queued"
+                | .state.current_step = $next_step
+                | .state.next_eligible_at_utc = $next_eligible
+                | .state.completed_steps = (
+                    (.state.completed_steps // [])
+                    + [ "'"$CUR_STEP"'" ]
+                    | unique
+                  )
+                | .state.last_run_at_utc = $now
+                ' "$qfile" > "$tmp"
+
+              mv "$tmp" "$qfile"
+              echo "UPDATED: ${IDEA_ID} next_step=${NEXT_STEP} next_eligible_at_utc=${next_eligible}"
+              processed_any=true
+            fi
+
           done <<< "$PENDING_FILES"
 
-          if [ "$ANY_PROCESSED" != "true" ]; then
-            echo "No queue items processed."
+          if [ "$processed_any" != "true" ]; then
+            echo "No eligible queue items processed (cooldown gate likely)."
             exit 0
           fi
 
           if [ -z "$(git status --porcelain -- research-queue research-results)" ]; then
-            echo "No effective changes to commit."
+            echo "No changes to commit."
             exit 0
           fi
 
@@ -162,5 +298,5 @@ jobs:
           git config user.name "GitHub Actions"
 
           git add research-queue research-results
-          git commit -m "🤖 process research queue (dummy worker)"
+          git commit -m "🤖 stepwise process research queue (mode-aware)"
           git push
