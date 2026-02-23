@@ -1,6 +1,6 @@
 {
   "queue_version": 1,
-  "status": "pending",
+  "status": "done",
   "task_type": "openclaw_research",
   "requested_action": "research",
   "idea_id": "da57dbc5-9432-444a-becf-65079aeb67be",
@@ -28,13 +28,13 @@
     ]
   },
   "state": {
-    "status": "queued",
-    "current_step": "step3",
+    "status": "done",
+    "current_step": null,
     "completed_steps": [
       "step1",
       "step2"
     ],
-    "next_eligible_at_utc": "2026-02-23T13:32:13Z",
+    "next_eligible_at_utc": null,
     "last_run_at_utc": "2026-02-23T13:17:13Z"
   },
   "source": {
@@ -59,5 +59,17 @@
     "enqueued_at_utc": "2026-02-23T12:38:12Z",
     "trigger": "github_actions",
     "workflow": "enqueue-research.yml"
+  },
+  "process": {
+    "processed_at_utc": "2026-02-23T13:53:57Z",
+    "worker": {
+      "name": "github-actions-stepwise-worker",
+      "version": 1
+    },
+    "mode": "placeholder"
+  },
+  "result": {
+    "dir": "research-results/da57dbc5-9432-444a-becf-65079aeb67be",
+    "final": "research-results/da57dbc5-9432-444a-becf-65079aeb67be/final.md"
   }
 }
