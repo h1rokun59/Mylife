@@ -1,0 +1,30 @@
+{
+  "queue_version": 1,
+  "status": "pending",
+  "task_type": "openclaw_research",
+  "requested_action": "research",
+  "idea_id": "e9e1a475-6ed2-4fdb-8ed2-34b0e8510439",
+  "source": {
+    "repo": "h1rokun59/Mylife",
+    "path": "ideas/2026-02-23/2026-02-23T20-08-17.md",
+    "commit_sha": "cd1fbd889f58ef7400d081fdef89b1acc467d514",
+    "url": "https://github.com/h1rokun59/Mylife/blob/cd1fbd889f58ef7400d081fdef89b1acc467d514/ideas/2026-02-23/2026-02-23T20-08-17.md"
+  },
+  "idea": {
+    "title": "💡 2026-02-23 20:08:17",
+    "body_snippet": "明ちゃんと話しているらしい",
+    "tag_keys": [
+      "people"
+    ],
+    "actions": [
+      "research"
+    ],
+    "created_at_utc": "2026-02-23T11:08:17.852Z",
+    "created_at_jst": "2026-02-23 20:08:17"
+  },
+  "enqueue": {
+    "enqueued_at_utc": "2026-02-23T11:08:26Z",
+    "trigger": "github_actions",
+    "workflow": "enqueue-research.yml"
+  }
+}
