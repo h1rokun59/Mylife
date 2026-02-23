@@ -200,8 +200,12 @@
   function toggleTag(el) { el.classList.toggle('selected'); }
 
   function getSelectedTags() {
-    return [...document.querySelectorAll('.tag.selected')].map(t => t.textContent.trim());
-  }
+  return [...document.querySelectorAll('.tag.selected')].map(t => ({
+    label: t.textContent.trim(),
+    key: t.dataset.key || t.textContent.trim(),
+    kind: t.dataset.kind || 'category'
+  }));
+}
 
   function toggleVoice() {
     if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
@@ -259,21 +263,36 @@
       return;
     }
 
-    const tags = getSelectedTags();
-    const now = new Date();
-    const timestamp = now.toISOString().replace(/[:.]/g, '-').slice(0, 19);
-    const dateStr = now.toISOString().slice(0, 10);
-    const timeStr = now.toLocaleTimeString('ja-JP');
-    const tagLine = tags.length > 0 ? `\n**Tags:** ${tags.join(' ')}` : '';
+const selectedTags = getSelectedTags();
+const categoryTags = selectedTags.filter(t => t.kind === 'category');
+const actionTags = selectedTags.filter(t => t.kind === 'action');
 
-    const content = `# 💡 ${dateStr} ${timeStr}
-${tagLine}
+const now = new Date();
+const timestamp = now.toISOString().replace(/[:.]/g, '-').slice(0, 19);
+const dateStr = now.toISOString().slice(0, 10);
+const timeStr = now.toLocaleTimeString('ja-JP');
+
+const tagLine = categoryTags.length > 0
+  ? `\n**Tags:** ${categoryTags.map(t => t.label).join(' ')}`
+  : '';
+
+const tagKeysLine = categoryTags.length > 0
+  ? `\n**TagKeys:** ${categoryTags.map(t => t.key).join(',')}`
+  : '';
+
+const actionsLine = actionTags.length > 0
+  ? `\n**Actions:** ${actionTags.map(t => t.key).join(',')}`
+  : '';
+
+const content = `# 💡 ${dateStr} ${timeStr}
+${tagLine}${tagKeysLine}${actionsLine}
 
 ${text}
 
 ---
 *Captured via Idea Capture App*
 `;
+
 
     const filename = `ideas/${dateStr}/${timestamp}.md`;
     const encoded = btoa(unescape(encodeURIComponent(content)));
@@ -303,7 +322,7 @@ ${text}
         setStatus('✅ GitHubにプッシュしました！', 'success');
         history.unshift({
           text: text.slice(0, 80),
-          tags,
+          tags: selectedTags.map(t => t.label),
           time: now.toLocaleString('ja-JP'),
           url: data.content.html_url
         });
