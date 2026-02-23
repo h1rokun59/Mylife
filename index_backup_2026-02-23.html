@@ -60,7 +60,6 @@
       color: #3fb950;
     }
     .tag.life.selected { background: #238636; color: #fff; }
-
     .btn-row { display: flex; gap: 10px; margin-top: 16px; }
     button {
       flex: 1;
@@ -78,16 +77,13 @@
     #pushBtn { background: #238636; color: #fff; }
     #pushBtn:disabled { background: #21262d; color: #8b949e; cursor: not-allowed; }
     #clearBtn { background: #21262d; color: #8b949e; border: 1px solid #30363d; flex: 0 0 auto; padding: 12px 16px; }
-
     .status { font-size: 0.85rem; margin-top: 12px; min-height: 20px; color: #8b949e; text-align: center; }
     .status.success { color: #3fb950; }
     .status.error { color: #f85149; }
     .status.info { color: #58a6ff; }
-
     details { margin-top: 0; }
     summary { cursor: pointer; font-size: 0.85rem; color: #8b949e; user-select: none; }
     .settings-grid { display: flex; flex-direction: column; gap: 12px; margin-top: 16px; }
-
     .history-item {
       background: #0d1117;
       border: 1px solid #21262d;
@@ -98,8 +94,6 @@
       color: #8b949e;
     }
     .history-item strong { color: #e6edf3; }
-    .history-item a { color: #58a6ff; text-decoration: none; }
-    .history-item a:hover { text-decoration: underline; }
   </style>
 </head>
 <body>
@@ -137,30 +131,29 @@
 
   <div style="margin-top:12px;">
     <label>タグ（複数選択可）</label>
-    <div class="tag-row">
-      <!-- Professional / category -->
-      <span class="tag pro" data-key="resilience" data-kind="category" onclick="toggleTag(this)">🛡️ Resilience</span>
-      <span class="tag pro" data-key="soc" data-kind="category" onclick="toggleTag(this)">🔒 SOC</span>
-      <span class="tag pro" data-key="threat-intel" data-kind="category" onclick="toggleTag(this)">🚨 Threat Intel</span>
-      <span class="tag pro" data-key="cloud" data-kind="category" onclick="toggleTag(this)">☁️ Cloud</span>
-      <span class="tag pro" data-key="ai-ml" data-kind="category" onclick="toggleTag(this)">🤖 AI/ML</span>
-      <span class="tag pro" data-key="architecture" data-kind="category" onclick="toggleTag(this)">🏗️ Architecture</span>
-      <span class="tag pro" data-key="people" data-kind="category" onclick="toggleTag(this)">👥 People</span>
-      <span class="tag pro" data-key="process" data-kind="category" onclick="toggleTag(this)">📋 Process</span>
+<div class="tag-row">
+  <!-- Professional / category -->
+  <span class="tag pro" data-key="resilience" data-kind="category" onclick="toggleTag(this)">🛡️ Resilience</span>
+  <span class="tag pro" data-key="soc" data-kind="category" onclick="toggleTag(this)">🔒 SOC</span>
+  <span class="tag pro" data-key="threat-intel" data-kind="category" onclick="toggleTag(this)">🚨 Threat Intel</span>
+  <span class="tag pro" data-key="cloud" data-kind="category" onclick="toggleTag(this)">☁️ Cloud</span>
+  <span class="tag pro" data-key="ai-ml" data-kind="category" onclick="toggleTag(this)">🤖 AI/ML</span>
+  <span class="tag pro" data-key="architecture" data-kind="category" onclick="toggleTag(this)">🏗️ Architecture</span>
+  <span class="tag pro" data-key="people" data-kind="category" onclick="toggleTag(this)">👥 People</span>
+  <span class="tag pro" data-key="process" data-kind="category" onclick="toggleTag(this)">📋 Process</span>
 
-      <!-- Personal / category -->
-      <span class="tag life" data-key="ski" data-kind="category" onclick="toggleTag(this)">⛷️ Ski</span>
-      <span class="tag life" data-key="hiking" data-kind="category" onclick="toggleTag(this)">🥾 Hiking</span>
-      <span class="tag life" data-key="camp" data-kind="category" onclick="toggleTag(this)">🏕️ Camp</span>
-      <span class="tag life" data-key="bike" data-kind="category" onclick="toggleTag(this)">🏍️ Bike</span>
-      <span class="tag life" data-key="rural" data-kind="category" onclick="toggleTag(this)">🌾 Rural</span>
-      <span class="tag life" data-key="life" data-kind="category" onclick="toggleTag(this)">🌱 Life</span>
-      <span class="tag life" data-key="random" data-kind="category" onclick="toggleTag(this)">💡 Random</span>
+  <!-- Personal / category -->
+  <span class="tag life" data-key="ski" data-kind="category" onclick="toggleTag(this)">⛷️ Ski</span>
+  <span class="tag life" data-key="hiking" data-kind="category" onclick="toggleTag(this)">🥾 Hiking</span>
+  <span class="tag life" data-key="camp" data-kind="category" onclick="toggleTag(this)">🏕️ Camp</span>
+  <span class="tag life" data-key="bike" data-kind="category" onclick="toggleTag(this)">🏍️ Bike</span>
+  <span class="tag life" data-key="rural" data-kind="category" onclick="toggleTag(this)">🌾 Rural</span>
+  <span class="tag life" data-key="life" data-kind="category" onclick="toggleTag(this)">🌱 Life</span>
+  <span class="tag life" data-key="random" data-kind="category" onclick="toggleTag(this)">💡 Random</span>
 
-      <!-- Action tag -->
-      <span class="tag pro" data-key="research" data-kind="action" onclick="toggleTag(this)">🔎 Research</span>
-    </div>
-  </div>
+  <!-- Action tag (new) -->
+  <span class="tag pro" data-key="research" data-kind="action" onclick="toggleTag(this)">🔎 Research</span>
+</div>
 
   <div class="btn-row">
     <button id="voiceBtn" onclick="toggleVoice()">🎤 音声入力</button>
@@ -204,46 +197,15 @@
     document.getElementById('settingsDetails').removeAttribute('open');
   }
 
-  function toggleTag(el) {
-    el.classList.toggle('selected');
-  }
+  function toggleTag(el) { el.classList.toggle('selected'); }
 
   function getSelectedTags() {
-    return [...document.querySelectorAll('.tag.selected')].map(t => ({
-      label: t.textContent.trim(),
-      key: t.dataset.key || t.textContent.trim(),
-      kind: t.dataset.kind || 'category'
-    }));
-  }
-
-  function formatJstParts(date = new Date()) {
-    const parts = new Intl.DateTimeFormat('ja-JP', {
-      timeZone: 'Asia/Tokyo',
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-      hour: '2-digit',
-      minute: '2-digit',
-      second: '2-digit',
-      hour12: false
-    }).formatToParts(date);
-
-    const map = {};
-    for (const p of parts) {
-      if (p.type !== 'literal') map[p.type] = p.value;
-    }
-
-    return {
-      dateStr: `${map.year}-${map.month}-${map.day}`,
-      timeStr: `${map.hour}:${map.minute}:${map.second}`,
-      timestamp: `${map.year}-${map.month}-${map.day}T${map.hour}-${map.minute}-${map.second}`
-    };
-  }
-
-  function generateIdeaId() {
-    if (window.crypto && crypto.randomUUID) return crypto.randomUUID();
-    return `idea-${Date.now()}-${Math.floor(Math.random() * 100000)}`;
-  }
+  return [...document.querySelectorAll('.tag.selected')].map(t => ({
+    label: t.textContent.trim(),
+    key: t.dataset.key || t.textContent.trim(),
+    kind: t.dataset.kind || 'category'
+  }));
+}
 
   function toggleVoice() {
     if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
@@ -301,38 +263,36 @@
       return;
     }
 
-    const selectedTags = getSelectedTags();
-    const categoryTags = selectedTags.filter(t => t.kind === 'category');
-    const actionTags = selectedTags.filter(t => t.kind === 'action');
+const selectedTags = getSelectedTags();
+const categoryTags = selectedTags.filter(t => t.kind === 'category');
+const actionTags = selectedTags.filter(t => t.kind === 'action');
 
-    const now = new Date();
-    const { dateStr, timeStr, timestamp } = formatJstParts(now);
-    const nowUtc = now.toISOString();
-    const nowJst = `${dateStr} ${timeStr}`;
-    const ideaId = generateIdeaId();
+const now = new Date();
+const timestamp = now.toISOString().replace(/[:.]/g, '-').slice(0, 19);
+const dateStr = now.toISOString().slice(0, 10);
+const timeStr = now.toLocaleTimeString('ja-JP');
 
-    const tagLine = categoryTags.length > 0
-      ? `\n**Tags:** ${categoryTags.map(t => t.label).join(' ')}`
-      : '';
+const tagLine = categoryTags.length > 0
+  ? `\n**Tags:** ${categoryTags.map(t => t.label).join(' ')}`
+  : '';
 
-    const tagKeysLine = categoryTags.length > 0
-      ? `\n**TagKeys:** ${categoryTags.map(t => t.key).join(',')}`
-      : '';
+const tagKeysLine = categoryTags.length > 0
+  ? `\n**TagKeys:** ${categoryTags.map(t => t.key).join(',')}`
+  : '';
 
-    const actionsLine = actionTags.length > 0
-      ? `\n**Actions:** ${actionTags.map(t => t.key).join(',')}`
-      : '';
+const actionsLine = actionTags.length > 0
+  ? `\n**Actions:** ${actionTags.map(t => t.key).join(',')}`
+  : '';
 
-    const content = `# 💡 ${nowJst}
-**Idea-ID:** ${ideaId}
-**Created-At-UTC:** ${nowUtc}
-**Created-At-JST:** ${nowJst}${tagLine}${tagKeysLine}${actionsLine}
+const content = `# 💡 ${dateStr} ${timeStr}
+${tagLine}${tagKeysLine}${actionsLine}
 
 ${text}
 
 ---
 *Captured via Idea Capture App*
 `;
+
 
     const filename = `ideas/${dateStr}/${timestamp}.md`;
     const encoded = btoa(unescape(encodeURIComponent(content)));
@@ -363,8 +323,8 @@ ${text}
         history.unshift({
           text: text.slice(0, 80),
           tags: selectedTags.map(t => t.label),
-          time: nowJst,
-          url: data.content && data.content.html_url ? data.content.html_url : ''
+          time: now.toLocaleString('ja-JP'),
+          url: data.content.html_url
         });
         if (history.length > 10) history.pop();
         localStorage.setItem('ideaHistory', JSON.stringify(history));
@@ -390,12 +350,7 @@ ${text}
     const el = document.getElementById('status');
     el.textContent = msg;
     el.className = `status ${type}`;
-    if (type === 'success') {
-      setTimeout(() => {
-        el.textContent = '';
-        el.className = 'status';
-      }, 3000);
-    }
+    if (type === 'success') setTimeout(() => { el.textContent = ''; el.className = 'status'; }, 3000);
   }
 
   function renderHistory() {
@@ -404,8 +359,7 @@ ${text}
     document.getElementById('historyList').innerHTML = history.slice(0, 5).map(h => `
       <div class="history-item">
         <strong>${h.text}${h.text.length >= 80 ? '...' : ''}</strong><br>
-        <span>${(h.tags || []).join(' ')} · ${h.time || ''}</span>
-        ${h.url ? `<br><a href="${h.url}" target="_blank" rel="noopener noreferrer">GitHubで開く</a>` : ''}
+        <span>${h.tags.join(' ')} · ${h.time}</span>
       </div>
     `).join('');
   }
