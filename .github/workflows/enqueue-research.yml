@@ -162,8 +162,8 @@ jobs:
             exit 0
           fi
 
-          # 変更がある場合のみコミット
-          if git diff --quiet -- research-queue; then
+          # 変更がある場合のみコミット（untracked も含めて判定）
+          if [ -z "$(git status --porcelain -- research-queue)" ]; then
             echo "No effective changes under research-queue."
             exit 0
           fi
@@ -171,6 +171,6 @@ jobs:
           git config user.email "actions@github.com"
           git config user.name "GitHub Actions"
 
-          git add research-queue/pending/*.json
+          git add research-queue
           git commit -m "🧠 enqueue research requests"
           git push
