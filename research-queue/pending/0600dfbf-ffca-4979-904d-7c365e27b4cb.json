@@ -1,0 +1,30 @@
+{
+  "queue_version": 1,
+  "status": "pending",
+  "task_type": "openclaw_research",
+  "requested_action": "research",
+  "idea_id": "0600dfbf-ffca-4979-904d-7c365e27b4cb",
+  "source": {
+    "repo": "h1rokun59/Mylife",
+    "path": "ideas/2026-02-23/2026-02-23T19-54-32.md",
+    "commit_sha": "0c781d5421d870d78f2d6b6a028e03d9b892be3e",
+    "url": "https://github.com/h1rokun59/Mylife/blob/0c781d5421d870d78f2d6b6a028e03d9b892be3e/ideas/2026-02-23/2026-02-23T19-54-32.md"
+  },
+  "idea": {
+    "title": "💡 2026-02-23 19:54:32",
+    "body_snippet": "娘が友達と電話している",
+    "tag_keys": [
+      "people"
+    ],
+    "actions": [
+      "research"
+    ],
+    "created_at_utc": "2026-02-23T10:54:32.349Z",
+    "created_at_jst": "2026-02-23 19:54:32"
+  },
+  "enqueue": {
+    "enqueued_at_utc": "2026-02-23T10:54:41Z",
+    "trigger": "github_actions",
+    "workflow": "enqueue-research.yml"
+  }
+}
