@@ -157,7 +157,6 @@ EOF
             echo "No effective changes to commit."
             exit 0
           fi
-＃＃
           git config user.email "actions@github.com"
           git config user.name "GitHub Actions"
 
