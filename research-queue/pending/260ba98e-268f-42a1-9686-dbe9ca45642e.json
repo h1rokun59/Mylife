@@ -29,9 +29,12 @@
   },
   "state": {
     "status": "queued",
-    "current_step": "step1",
-    "completed_steps": [],
-    "next_eligible_at_utc": "2026-02-24T13:06:36Z"
+    "current_step": "step2",
+    "completed_steps": [
+      "step1"
+    ],
+    "next_eligible_at_utc": "2026-02-24T13:21:48Z",
+    "last_run_at_utc": "2026-02-24T13:06:48Z"
   },
   "source": {
     "repo": "h1rokun59/Mylife",
