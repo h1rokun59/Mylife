@@ -1,0 +1,59 @@
+{
+  "queue_version": 1,
+  "status": "pending",
+  "task_type": "openclaw_research",
+  "requested_action": "research",
+  "idea_id": "309cbf06-a16a-4749-8ab3-baf091c89fdd",
+  "execution": {
+    "mode": "normal",
+    "orchestrator": "claude-code",
+    "strategy": "sequential",
+    "parallelism": 1,
+    "one_step_per_run": true,
+    "cooldown_minutes_between_steps": 15,
+    "providers": {
+      "allowed": [
+        "gemini"
+      ],
+      "primary": "gemini"
+    }
+  },
+  "methodology": {
+    "name": "three-step",
+    "version": 1,
+    "steps": [
+      "step1",
+      "step2",
+      "step3"
+    ]
+  },
+  "state": {
+    "status": "queued",
+    "current_step": "step1",
+    "completed_steps": [],
+    "next_eligible_at_utc": "2026-02-24T14:51:53Z"
+  },
+  "source": {
+    "repo": "h1rokun59/Mylife",
+    "path": "ideas/2026-02-24/2026-02-24T23-51-43.md",
+    "commit_sha": "ca7e02ca24bfeacc1baace34b3d55cc38c75bb5a",
+    "url": "https://github.com/h1rokun59/Mylife/blob/ca7e02ca24bfeacc1baace34b3d55cc38c75bb5a/ideas/2026-02-24/2026-02-24T23-51-43.md"
+  },
+  "idea": {
+    "title": "💡 2026-02-24 23:51:43",
+    "body_snippet": "脅威インテリジェンスを提供するベンダーで、特に同じ会社内にインシデントレスポンスを提供している会社と、金融、及び中国を主な拠点とするアクターに強いベンダーは？",
+    "tag_keys": [
+      "threat-intel"
+    ],
+    "actions": [
+      "research"
+    ],
+    "created_at_utc": "2026-02-24T14:51:43.571Z",
+    "created_at_jst": "2026-02-24 23:51:43"
+  },
+  "enqueue": {
+    "enqueued_at_utc": "2026-02-24T14:51:53Z",
+    "trigger": "github_actions",
+    "workflow": "enqueue-research.yml"
+  }
+}
