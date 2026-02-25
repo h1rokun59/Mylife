@@ -1,0 +1,60 @@
+{
+  "queue_version": 1,
+  "status": "pending",
+  "task_type": "openclaw_research",
+  "requested_action": "research",
+  "idea_id": "c84c0ab4-782d-4e5f-acda-d571b2cbe899",
+  "execution": {
+    "mode": "normal",
+    "orchestrator": "claude-code",
+    "strategy": "sequential",
+    "parallelism": 1,
+    "one_step_per_run": true,
+    "cooldown_minutes_between_steps": 15,
+    "providers": {
+      "allowed": [
+        "gemini"
+      ],
+      "primary": "gemini"
+    }
+  },
+  "methodology": {
+    "name": "four-step",
+    "version": 1,
+    "steps": [
+      "step1",
+      "step2",
+      "step3",
+      "step4"
+    ]
+  },
+  "state": {
+    "status": "queued",
+    "current_step": "step1",
+    "completed_steps": [],
+    "next_eligible_at_utc": "2026-02-25T14:47:24Z"
+  },
+  "source": {
+    "repo": "h1rokun59/Mylife",
+    "path": "ideas/2026-02-25/2026-02-25T23-47-11.md",
+    "commit_sha": "98bb93b0926f4f98a9edb1a9ce446f2478ca089a",
+    "url": "https://github.com/h1rokun59/Mylife/blob/98bb93b0926f4f98a9edb1a9ce446f2478ca089a/ideas/2026-02-25/2026-02-25T23-47-11.md"
+  },
+  "idea": {
+    "title": "💡 2026-02-25 23:47:11",
+    "body_snippet": "日本国内向けのサイバー脅威情報を収集して提供している会社ってあるの？",
+    "tag_keys": [
+      "threat-intel"
+    ],
+    "actions": [
+      "research"
+    ],
+    "created_at_utc": "2026-02-25T14:47:11.506Z",
+    "created_at_jst": "2026-02-25 23:47:11"
+  },
+  "enqueue": {
+    "enqueued_at_utc": "2026-02-25T14:47:24Z",
+    "trigger": "github_actions",
+    "workflow": "enqueue-research.yml"
+  }
+}
