@@ -444,21 +444,5 @@ ${text}
   loadSettings();
 </script>
 
-<!-- パスワード認証：メインscriptとは完全に分離 -->
-<script>
-  (function() {
-    const PASS = '+IDEAyuta1330';
-    const key = 'app_auth';
-    if (localStorage.getItem(key) !== PASS) {
-      const input = prompt('パスワードを入力してください：');
-      if (input !== PASS) {
-        document.body.innerHTML = '<p style="color:red;text-align:center;margin-top:40vh">アクセス拒否</p>';
-        return;
-      }
-      localStorage.setItem(key, PASS);
-    }
-  })();
-</script>
-
 </body>
 </html>
