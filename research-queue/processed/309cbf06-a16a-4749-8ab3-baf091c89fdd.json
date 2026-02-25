@@ -1,6 +1,6 @@
 {
   "queue_version": 1,
-  "status": "pending",
+  "status": "done",
   "task_type": "openclaw_research",
   "requested_action": "research",
   "idea_id": "309cbf06-a16a-4749-8ab3-baf091c89fdd",
@@ -28,13 +28,13 @@
     ]
   },
   "state": {
-    "status": "queued",
-    "current_step": "step3",
+    "status": "done",
+    "current_step": null,
     "completed_steps": [
       "step1",
       "step2"
     ],
-    "next_eligible_at_utc": "2026-02-24T15:28:29Z",
+    "next_eligible_at_utc": null,
     "last_run_at_utc": "2026-02-24T15:13:29Z"
   },
   "source": {
@@ -59,5 +59,17 @@
     "enqueued_at_utc": "2026-02-24T14:51:53Z",
     "trigger": "github_actions",
     "workflow": "enqueue-research.yml"
+  },
+  "process": {
+    "processed_at_utc": "2026-02-25T12:01:48Z",
+    "worker": {
+      "name": "github-actions-stepwise-worker",
+      "version": 7
+    },
+    "mode": "heavy-parallel+synthesis"
+  },
+  "result": {
+    "repo": "h1rokun59/soc-modernization",
+    "dir": "research-results/309cbf06-a16a-4749-8ab3-baf091c89fdd"
   }
 }
