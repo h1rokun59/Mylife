@@ -25,11 +25,23 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: "Stepwise worker (SOC output + Gemini step1/step2/step3 + context-injection)"
+      - name: "Stepwise worker (Normal=Gemini stepwise, Heavy=parallel multi-model + synthesis)"
         env:
+          # Gemini
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          GEMINI_MODEL_NORMAL: gemini-2.5-flash
+          GEMINI_MODEL: gemini-2.5-flash
           GEMINI_THINKING_BUDGET: "-1"
+
+          # OpenAI (optional)
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_MODEL: gpt-4.1
+
+          # Anthropic (optional)
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          ANTHROPIC_MODEL: claude-sonnet-4-20250514
+          ANTHROPIC_VERSION: "2023-06-01"
+
+          # SOC repo (outputs)
           ROUTER_PAT: ${{ secrets.ROUTER_PAT }}
           SOC_OWNER: h1rokun59
           SOC_REPO_SLUG: soc-modernization
@@ -51,6 +63,8 @@ jobs:
 
           processed_any=false
           SOC_CHANGED=false
+
+          # Normalの無料運用：1 run 1 Gemini call制限（Heavyは制限しない）
           GEMINI_CALLS_THIS_RUN=0
 
           SOC_DIR="/tmp/${SOC_REPO_SLUG}"
@@ -117,18 +131,12 @@ jobs:
           read_ctx_file() {
             local rel="$1"
             local p="${SOC_DIR}/${rel}"
-            if [ -f "$p" ]; then
-              head -c 12000 "$p"
-            else
-              echo ""
-            fi
+            if [ -f "$p" ]; then head -c 12000 "$p"; else echo ""; fi
           }
 
+          # ---------- LLM callers ----------
           gemini_generate() {
             local prompt="$1"
-            local model="${GEMINI_MODEL_NORMAL:-gemini-2.5-flash}"
-            local budget="${GEMINI_THINKING_BUDGET:--1}"
-
             if [ -z "${GEMINI_API_KEY:-}" ]; then
               echo "__ERROR__: GEMINI_API_KEY is not set"
               return 2
@@ -137,7 +145,7 @@ jobs:
             local req
             req="$(jq -n \
               --arg p "$prompt" \
-              --argjson b "$budget" \
+              --argjson b "${GEMINI_THINKING_BUDGET:--1}" \
               '{
                 contents: [{ role: "user", parts: [{ text: $p }] }],
                 generationConfig: { thinkingConfig: { thinkingBudget: $b } }
@@ -148,7 +156,7 @@ jobs:
               -H "x-goog-api-key: ${GEMINI_API_KEY}" \
               -H "Content-Type: application/json" \
               -X POST \
-              "https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent" \
+              "https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL:-gemini-2.5-flash}:generateContent" \
               -d "$req")" || { echo "__ERROR__: curl failed"; return 3; }
 
             if echo "$resp" | jq -e '.error' >/dev/null 2>&1; then
@@ -162,11 +170,130 @@ jobs:
               echo "__ERROR__: empty response text"
               return 5
             fi
-
             printf '%s' "$text"
+          }
+
+          openai_generate() {
+            local prompt="$1"
+            if [ -z "${OPENAI_API_KEY:-}" ]; then
+              echo "__ERROR__: OPENAI_API_KEY is not set"
+              return 2
+            fi
+
+            local req
+            req="$(jq -n --arg m "${OPENAI_MODEL:-gpt-4.1}" --arg p "$prompt" '{model:$m,input:$p}')"
+
+            local resp
+            resp="$(curl -sS https://api.openai.com/v1/responses \
+              -H "Content-Type: application/json" \
+              -H "Authorization: Bearer ${OPENAI_API_KEY}" \
+              -d "$req")" || { echo "__ERROR__: curl failed"; return 3; }
+
+            if echo "$resp" | jq -e '.error' >/dev/null 2>&1; then
+              echo "__ERROR__: $(echo "$resp" | jq -r '.error.message // "unknown error"')"
+              return 4
+            fi
+
+            # なるべく頑健に “text” を拾う
+            local text
+            text="$(echo "$resp" | jq -r '[.output[]?.content[]?.text, ..|objects|.text?] | map(select(type=="string")) | unique | join("\n")' 2>/dev/null || true)"
+            if [ -z "$text" ] || [ "$text" = "null" ]; then
+              echo "__ERROR__: empty response text"
+              return 5
+            fi
+            printf '%s' "$text"
+          }
+
+          anthropic_generate() {
+            local prompt="$1"
+            if [ -z "${ANTHROPIC_API_KEY:-}" ]; then
+              echo "__ERROR__: ANTHROPIC_API_KEY is not set"
+              return 2
+            fi
+
+            local req
+            req="$(jq -n \
+              --arg m "${ANTHROPIC_MODEL:-claude-sonnet-4-20250514}" \
+              --arg p "$prompt" \
+              '{model:$m,max_tokens:2048,messages:[{role:"user",content:$p}] }')"
+
+            local resp
+            resp="$(curl -sS https://api.anthropic.com/v1/messages \
+              --header "x-api-key: ${ANTHROPIC_API_KEY}" \
+              --header "anthropic-version: ${ANTHROPIC_VERSION:-2023-06-01}" \
+              --header "content-type: application/json" \
+              --data "$req")" || { echo "__ERROR__: curl failed"; return 3; }
+
+            if echo "$resp" | jq -e '.error' >/dev/null 2>&1; then
+              echo "__ERROR__: $(echo "$resp" | jq -r '.error.message // "unknown error"')"
+              return 4
+            fi
+
+            local text
+            text="$(echo "$resp" | jq -r '[.content[]?.text] | join("\n")' 2>/dev/null || true)"
+            if [ -z "$text" ] || [ "$text" = "null" ]; then
+              echo "__ERROR__: empty response text"
+              return 5
+            fi
+            printf '%s' "$text"
+          }
+
+          pick_orchestrator() {
+            # 優先：Claude→OpenAI→Gemini
+            if [ -n "${ANTHROPIC_API_KEY:-}" ]; then echo "claude"; return; fi
+            if [ -n "${OPENAI_API_KEY:-}" ]; then echo "chatgpt"; return; fi
+            echo "gemini"
+          }
+
+          run_provider() {
+            local provider="$1"
+            local prompt="$2"
+            local outfile="$3"
+
+            set +e
+            case "$provider" in
+              gemini)
+                out="$(gemini_generate "$prompt")"; rc=$? ;;
+              chatgpt)
+                out="$(openai_generate "$prompt")"; rc=$? ;;
+              claude)
+                out="$(anthropic_generate "$prompt")"; rc=$? ;;
+              *)
+                out="__ERROR__: unknown provider $provider"; rc=99 ;;
+            esac
+            set -e
+
+            mkdir -p "$(dirname "$outfile")"
+            if [ $rc -ne 0 ] || echo "$out" | grep -q '^__ERROR__:'; then
+              printf "%s\n" "$out" > "$outfile"
+              return 1
+            fi
+            printf "%s\n" "$out" > "$outfile"
             return 0
           }
 
+          heavy_parallel_stage() {
+            local stage="$1"   # step1|step2|step3
+            local prompt="$2"
+            local outdir="$3"  # .../heavy/raw/stepX
+            shift 3
+            local providers=("$@")
+
+            mkdir -p "$outdir"
+            pids=()
+            for pr in "${providers[@]}"; do
+              run_provider "$pr" "$prompt" "${outdir}/${pr}.md" &
+              pids+=($!)
+            done
+
+            fail=0
+            for pid in "${pids[@]}"; do
+              wait "$pid" || fail=1
+            done
+            return $fail
+          }
+
+          # ---------- commit/push SOC repo ----------
           push_soc_repo() {
             local msg="$1"
             if [ "$SOC_CHANGED" != "true" ]; then return 0; fi
@@ -187,12 +314,10 @@ jobs:
                   return 0
                 fi
               else
-                echo "SOC rebase failed; aborting."
                 git -C "${SOC_DIR}" rebase --abort || true
               fi
               sleep $((i * 2))
             done
-
             echo "SOC push failed after retries."
             return 1
           }
@@ -223,10 +348,7 @@ jobs:
             SOURCE_PATH=$(jq -r '.source.path // ""' "$qfile")
 
             if [ -z "$IDEA_ID" ]; then IDEA_ID="$(basename "$qfile" .json)"; fi
-            if [ "$STATUS" != "pending" ]; then
-              echo "Skip: status=$STATUS"
-              continue
-            fi
+            if [ "$STATUS" != "pending" ]; then continue; fi
 
             NEXT_EPOCH="$(to_epoch "$NEXT_ELIGIBLE")"
             if [ "$NEXT_EPOCH" -gt "$NOW_EPOCH" ]; then
@@ -234,17 +356,10 @@ jobs:
               continue
             fi
 
-            # output target decision
             TARGET="mylife"
             if [ "$MODE" = "super-heavy" ] || is_pro_task "$TAG_KEYS"; then
               TARGET="soc"
               ensure_soc_repo
-            fi
-
-            # free-tier friendly: only 1 gemini call per run total
-            if [ "$MODE" = "normal" ] && { [ "$CUR_STEP" = "step1" ] || [ "$CUR_STEP" = "step2" ] || [ "$CUR_STEP" = "step3" ]; } && [ "$GEMINI_CALLS_THIS_RUN" -ge 1 ]; then
-              echo "Skip: Gemini call limit reached for this run (1 call)."
-              continue
             fi
 
             OUT_DIR="research-results/${IDEA_ID}"
@@ -253,55 +368,76 @@ jobs:
             fi
             mkdir -p "$OUT_DIR"
 
+            IDEA_BODY="$(extract_idea_body "$SOURCE_PATH")"
+
+            # Context (SOC tasks only)
+            CTX=""
+            if [ "$TARGET" = "soc" ]; then
+              CTX_MUST="$(read_ctx_file 'research-context/00-MUST-READ.md')"
+              CTX_DATA="$(read_ctx_file 'research-context/10-data-handling.md')"
+              CTX_GUARD="$(read_ctx_file 'research-context/20-research-guardrails.md')"
+              CTX_OUTT="$(read_ctx_file 'research-context/30-output-template.md')"
+              CTX_BG="$(read_ctx_file 'research-context/background.md')"
+              CTX_ORG="$(read_ctx_file 'research-context/40-org-context-sanitized.md')"
+              CTX_TOOL="$(read_ctx_file 'research-context/50-tool-landscape-candidates.md')"
+              CTX_S1="$(read_ctx_file 'research-context/3step/step1-instructions.md')"
+              CTX_S2="$(read_ctx_file 'research-context/3step/step2-instructions.md')"
+              CTX_S3="$(read_ctx_file 'research-context/3step/step3-instructions.md')"
+              CTX="$(printf '%s\n\n%s\n\n%s\n\n%s\n\n%s\n\n%s\n\n%s\n\n%s\n\n%s\n\n%s\n' \
+                "$CTX_MUST" "$CTX_DATA" "$CTX_GUARD" "$CTX_OUTT" "$CTX_BG" "$CTX_ORG" "$CTX_TOOL" "$CTX_S1" "$CTX_S2" "$CTX_S3")"
+            fi
+
+            # ----- decide steps_to_run -----
             steps_to_run=()
             if [ "$MODE" = "super-heavy" ] && [ "$ONE_STEP_PER_RUN" = "false" ]; then
               s="$CUR_STEP"
-              while [ -n "$s" ]; do
-                steps_to_run+=("$s")
-                s="$(next_step "$s")"
-              done
+              while [ -n "$s" ]; do steps_to_run+=("$s"); s="$(next_step "$s")"; done
             else
               steps_to_run+=("$CUR_STEP")
             fi
 
             echo "Target=$TARGET Mode=$MODE current_step=$CUR_STEP steps_to_run=${steps_to_run[*]}"
 
+            # ----- providers for heavy -----
+            ORCH="$(pick_orchestrator)"
+            # queueのallowedを読む（無い/空ならHeavyはデフォルトで3つ）
+            allowed_csv="$(jq -r '(.execution.providers.allowed // []) | join(",")' "$qfile")"
+            if [ "$MODE" = "super-heavy" ] && [ -z "$allowed_csv" ]; then
+              allowed_csv="gemini,claude,chatgpt"
+            fi
+
+            # provider listを構成（キーが無いものは自動スキップ）
+            PROVIDERS=()
+            echo ",$allowed_csv," | grep -qi ",gemini," && [ -n "${GEMINI_API_KEY:-}" ] && PROVIDERS+=("gemini")
+            echo ",$allowed_csv," | grep -qi ",chatgpt," && [ -n "${OPENAI_API_KEY:-}" ] && PROVIDERS+=("chatgpt")
+            echo ",$allowed_csv," | grep -qi ",claude," && [ -n "${ANTHROPIC_API_KEY:-}" ] && PROVIDERS+=("claude")
+
+            if [ "$MODE" = "super-heavy" ] && [ "${#PROVIDERS[@]}" -eq 0 ]; then
+              echo "No providers available for heavy (missing API keys). Fallback to gemini required."
+              exit 3
+            fi
+
             for s in "${steps_to_run[@]}"; do
               sf="$(step_file "$s")"
               step_path="${OUT_DIR}/${sf}"
 
-              # ---- Normal mode: Step1/Step2/Step3 Gemini ----
-              if [ "$MODE" = "normal" ] && [ "$s" = "step1" ]; then
-                IDEA_BODY="$(extract_idea_body "$SOURCE_PATH")"
-
-                CTX=""
-                if [ "$TARGET" = "soc" ]; then
-                  CTX_MUST="$(read_ctx_file 'research-context/00-MUST-READ.md')"
-                  CTX_DATA="$(read_ctx_file 'research-context/10-data-handling.md')"
-                  CTX_GUARD="$(read_ctx_file 'research-context/20-research-guardrails.md')"
-                  CTX_OUTT="$(read_ctx_file 'research-context/30-output-template.md')"
-                  CTX_BG="$(read_ctx_file 'research-context/background.md')"
-                  CTX_ORG="$(read_ctx_file 'research-context/40-org-context-sanitized.md')"
-                  CTX_TOOL="$(read_ctx_file 'research-context/50-tool-landscape-candidates.md')"
-                  CTX_STEP1="$(read_ctx_file 'research-context/3step/step1-instructions.md')"
-                  CTX="$(printf '%s\n\n%s\n\n%s\n\n%s\n\n%s\n\n%s\n\n%s\n\n%s\n' \
-                    "$CTX_MUST" "$CTX_DATA" "$CTX_GUARD" "$CTX_OUTT" "$CTX_BG" "$CTX_ORG" "$CTX_TOOL" "$CTX_STEP1")"
+              # =========================
+              # NORMAL MODE (existing)
+              # =========================
+              if [ "$MODE" = "normal" ] && [ "$s" = "$CUR_STEP" ]; then
+                # NormalはGemini 1回/Run制限
+                if [ "$GEMINI_CALLS_THIS_RUN" -ge 1 ]; then
+                  echo "Skip: Gemini call limit reached for this run (1 call)."
+                  continue 2
                 fi
 
+                # Step prompt (normal)
                 PROMPT="$(
                   {
-                    printf '%s\n' 'あなたはリサーチ支援AIです。いまから「3Step調査プロセスのStep1（論点整理＋調査設計）」だけを実施してください。'
-                    printf '%s\n' '※会社系コンテクストとガードレールを必ず前提として扱うこと。'
-                    printf '\n'
-                    printf '%s\n' '制約:'
-                    printf '%s\n' '- 外部Web検索はしない（断定より調査設計と論点整理に集中）'
-                    printf '%s\n' '- 機密/固有名詞/個人情報は禁止（抽象化）'
-                    printf '%s\n' '- 不確実なことは「未確認」と明記'
-                    printf '%s\n' '- 出力はMarkdownのみ'
+                    printf '%s\n' "あなたは3Step調査プロセスの ${s} を実施してください（外部Web検索なし・Markdownのみ・機密抽象化）。"
                     printf '\n'
                     if [ -n "$CTX" ]; then
-                      printf '%s\n' '---'
-                      printf '%s\n' 'Context Pack (MUST READ):'
+                      printf '%s\n' '--- Context Pack (MUST READ) ---'
                       printf '%s\n' "$CTX"
                       printf '\n'
                       printf '%s\n' '---'
@@ -316,159 +452,62 @@ jobs:
                   }
                 )"
 
-                echo "Calling Gemini for step1... target=$TARGET"
+                echo "Calling Gemini for ${s} (normal)..."
                 GEMINI_CALLS_THIS_RUN=$((GEMINI_CALLS_THIS_RUN + 1))
-
                 set +e
                 OUT="$(gemini_generate "$PROMPT")"
                 RC=$?
                 set -e
 
+                mkdir -p "$(dirname "$step_path")"
                 if [ $RC -ne 0 ] || echo "$OUT" | grep -q '^__ERROR__:'; then
-                  mkdir -p "$(dirname "$step_path")"
-                  printf '%s\n' "# 🧩 step1 (Gemini ERROR)" > "$step_path"
+                  printf '%s\n' "# 🧩 ${s} (Gemini ERROR)" > "$step_path"
                   printf '%s\n' "$OUT" >> "$step_path"
                   processed_any=true
                   [ "$TARGET" = "soc" ] && SOC_CHANGED=true
                   continue 2
                 fi
 
-                mkdir -p "$(dirname "$step_path")"
                 {
-                  printf '# 🧩 step1 (Gemini Thinking)\n\n'
+                  printf '# 🧩 %s (Gemini Thinking)\n\n' "$s"
                   printf '**Idea-ID:** %s\n' "$IDEA_ID"
                   printf '**Mode:** %s\n' "$MODE"
                   printf '**Target:** %s\n' "$TARGET"
                   printf '**Ran-At-UTC:** %s\n\n' "$NOW_UTC"
                   printf '%s\n' "$OUT"
                 } > "$step_path"
-
                 [ "$TARGET" = "soc" ] && SOC_CHANGED=true
 
-              elif [ "$MODE" = "normal" ] && [ "$s" = "step2" ]; then
-                IDEA_BODY="$(extract_idea_body "$SOURCE_PATH")"
-
-                STEP1_PATH="${OUT_DIR}/01-step1.md"
-                STEP1_TEXT=""
-                if [ -f "$STEP1_PATH" ]; then
-                  STEP1_TEXT="$(head -c 12000 "$STEP1_PATH")"
-                fi
-
-                CTX=""
-                if [ "$TARGET" = "soc" ]; then
-                  CTX_MUST="$(read_ctx_file 'research-context/00-MUST-READ.md')"
-                  CTX_DATA="$(read_ctx_file 'research-context/10-data-handling.md')"
-                  CTX_GUARD="$(read_ctx_file 'research-context/20-research-guardrails.md')"
-                  CTX_OUTT="$(read_ctx_file 'research-context/30-output-template.md')"
-                  CTX_BG="$(read_ctx_file 'research-context/background.md')"
-                  CTX_ORG="$(read_ctx_file 'research-context/40-org-context-sanitized.md')"
-                  CTX_TOOL="$(read_ctx_file 'research-context/50-tool-landscape-candidates.md')"
-                  CTX_STEP2="$(read_ctx_file 'research-context/3step/step2-instructions.md')"
-                  CTX="$(printf '%s\n\n%s\n\n%s\n\n%s\n\n%s\n\n%s\n\n%s\n\n%s\n' \
-                    "$CTX_MUST" "$CTX_DATA" "$CTX_GUARD" "$CTX_OUTT" "$CTX_BG" "$CTX_ORG" "$CTX_TOOL" "$CTX_STEP2")"
-                fi
-
-                PROMPT="$(
-                  {
-                    printf '%s\n' 'あなたはStep2の冷徹な評価者です（監査観点＋Red Team視点）。'
-                    printf '%s\n' 'いまから「3Step調査プロセスのStep2（反証・穴あけ・リスク評価）」だけを実施してください。'
-                    printf '%s\n' '※Step1の設計を壊しにいく。監査可能性/説明責任を最優先。'
-                    printf '\n'
-                    printf '%s\n' '制約:'
-                    printf '%s\n' '- 外部Web検索はしない（まず前提・失敗モード・監査性を洗う）'
-                    printf '%s\n' '- 機密/固有名詞/個人情報は禁止（抽象化）'
-                    printf '%s\n' '- 不確実なことは「未確認」と明記'
-                    printf '%s\n' '- 出力はMarkdownのみ'
-                    printf '\n'
-                    if [ -n "$CTX" ]; then
-                      printf '%s\n' '---'
-                      printf '%s\n' 'Context Pack (MUST READ):'
-                      printf '%s\n' "$CTX"
-                      printf '\n'
-                      printf '%s\n' '---'
-                    fi
-                    printf '%s\n' '入力:'
-                    printf '%s\n' "- Title: ${TITLE}"
-                    printf '%s\n' "- TagKeys: ${TAG_KEYS}"
-                    printf '%s\n' "- Actions: ${ACTIONS}"
-                    printf '%s\n' "- Source: ${SOURCE_URL}"
-                    printf '\n'
-                    printf '%s\n' '--- Step1 Output (input) ---'
-                    printf '%s\n' "${STEP1_TEXT:-"(missing step1 output)"}"
-                    printf '\n'
-                    printf '%s\n' '--- Original Idea Body ---'
-                    printf '%s\n' "${IDEA_BODY}"
-                  }
-                )"
-
-                echo "Calling Gemini for step2... target=$TARGET"
-                GEMINI_CALLS_THIS_RUN=$((GEMINI_CALLS_THIS_RUN + 1))
-
-                set +e
-                OUT="$(gemini_generate "$PROMPT")"
-                RC=$?
-                set -e
-
-                if [ $RC -ne 0 ] || echo "$OUT" | grep -q '^__ERROR__:'; then
-                  mkdir -p "$(dirname "$step_path")"
-                  printf '%s\n' "# 🧩 step2 (Gemini ERROR)" > "$step_path"
-                  printf '%s\n' "$OUT" >> "$step_path"
-                  processed_any=true
-                  [ "$TARGET" = "soc" ] && SOC_CHANGED=true
-                  continue 2
-                fi
-
-                mkdir -p "$(dirname "$step_path")"
-                {
-                  printf '# 🧩 step2 (Gemini Thinking)\n\n'
-                  printf '**Idea-ID:** %s\n' "$IDEA_ID"
-                  printf '**Mode:** %s\n' "$MODE"
-                  printf '**Target:** %s\n' "$TARGET"
-                  printf '**Ran-At-UTC:** %s\n\n' "$NOW_UTC"
-                  printf '%s\n' "$OUT"
-                } > "$step_path"
-
-                [ "$TARGET" = "soc" ] && SOC_CHANGED=true
-
-              elif [ "$MODE" = "normal" ] && [ "$s" = "step3" ]; then
-                IDEA_BODY="$(extract_idea_body "$SOURCE_PATH")"
-
-                STEP1_PATH="${OUT_DIR}/01-step1.md"
-                STEP2_PATH="${OUT_DIR}/02-step2.md"
+              # =========================
+              # HEAVY MODE (super-heavy)
+              # =========================
+              elif [ "$MODE" = "super-heavy" ]; then
+                # step-specific prompt
                 STEP1_TEXT=""
                 STEP2_TEXT=""
-                [ -f "$STEP1_PATH" ] && STEP1_TEXT="$(head -c 12000 "$STEP1_PATH")"
-                [ -f "$STEP2_PATH" ] && STEP2_TEXT="$(head -c 12000 "$STEP2_PATH")"
-
-                CTX=""
-                if [ "$TARGET" = "soc" ]; then
-                  CTX_MUST="$(read_ctx_file 'research-context/00-MUST-READ.md')"
-                  CTX_DATA="$(read_ctx_file 'research-context/10-data-handling.md')"
-                  CTX_GUARD="$(read_ctx_file 'research-context/20-research-guardrails.md')"
-                  CTX_OUTT="$(read_ctx_file 'research-context/30-output-template.md')"
-                  CTX_BG="$(read_ctx_file 'research-context/background.md')"
-                  CTX_ORG="$(read_ctx_file 'research-context/40-org-context-sanitized.md')"
-                  CTX_TOOL="$(read_ctx_file 'research-context/50-tool-landscape-candidates.md')"
-                  CTX_STEP3="$(read_ctx_file 'research-context/3step/step3-instructions.md')"
-                  CTX="$(printf '%s\n\n%s\n\n%s\n\n%s\n\n%s\n\n%s\n\n%s\n\n%s\n' \
-                    "$CTX_MUST" "$CTX_DATA" "$CTX_GUARD" "$CTX_OUTT" "$CTX_BG" "$CTX_ORG" "$CTX_TOOL" "$CTX_STEP3")"
-                fi
+                [ -f "${OUT_DIR}/01-step1.md" ] && STEP1_TEXT="$(head -c 12000 "${OUT_DIR}/01-step1.md")"
+                [ -f "${OUT_DIR}/02-step2.md" ] && STEP2_TEXT="$(head -c 12000 "${OUT_DIR}/02-step2.md")"
 
                 PROMPT="$(
                   {
-                    printf '%s\n' 'あなたはStep3の統合者（Executive Director/Managing Director級）です。'
-                    printf '%s\n' 'いまから「3Step調査プロセスのStep3（統合結論＋実行計画）」だけを実施してください。'
-                    printf '%s\n' '※Step1/2を統合し、条件付き推奨と実行計画（PoC含む）に落とす。監査可能性を最優先。'
-                    printf '\n'
-                    printf '%s\n' '制約:'
-                    printf '%s\n' '- 外部Web検索はしない（まず統合・意思決定・計画化に集中）'
-                    printf '%s\n' '- 機密/固有名詞/個人情報は禁止（抽象化）'
-                    printf '%s\n' '- 不確実なことは「未確認」と明記'
-                    printf '%s\n' '- 出力はMarkdownのみ'
+                    case "$s" in
+                      step1)
+                        printf '%s\n' 'あなたはStep1の設計者です（実戦SOC/アーキテクト）。論点整理と調査設計を作ってください。'
+                        ;;
+                      step2)
+                        printf '%s\n' 'あなたはStep2の冷徹な評価者です（監査＋Red Team）。Step1を壊して穴とリスクを洗い出してください。'
+                        ;;
+                      step3)
+                        printf '%s\n' 'あなたはStep3の統合者（Executive）。Step1/2を統合し、条件付き推奨と実行計画に落としてください。'
+                        ;;
+                      *)
+                        printf '%s\n' '3Step調査を実施してください。'
+                        ;;
+                    esac
+                    printf '%s\n' '制約: 外部Web検索なし / Markdownのみ / 機密・固有名詞・個人情報は抽象化 / 未確認は未確認と書く'
                     printf '\n'
                     if [ -n "$CTX" ]; then
-                      printf '%s\n' '---'
-                      printf '%s\n' 'Context Pack (MUST READ):'
+                      printf '%s\n' '--- Context Pack (MUST READ) ---'
                       printf '%s\n' "$CTX"
                       printf '\n'
                       printf '%s\n' '---'
@@ -479,59 +518,96 @@ jobs:
                     printf '%s\n' "- Actions: ${ACTIONS}"
                     printf '%s\n' "- Source: ${SOURCE_URL}"
                     printf '\n'
-                    printf '%s\n' '--- Step1 Output ---'
-                    printf '%s\n' "${STEP1_TEXT:-"(missing step1 output)"}"
-                    printf '\n'
-                    printf '%s\n' '--- Step2 Output ---'
-                    printf '%s\n' "${STEP2_TEXT:-"(missing step2 output)"}"
-                    printf '\n'
+                    if [ "$s" = "step2" ] || [ "$s" = "step3" ]; then
+                      printf '%s\n' '--- Step1 Output (current) ---'
+                      printf '%s\n' "${STEP1_TEXT:-"(missing step1 output)"}"
+                      printf '\n'
+                    fi
+                    if [ "$s" = "step3" ]; then
+                      printf '%s\n' '--- Step2 Output (current) ---'
+                      printf '%s\n' "${STEP2_TEXT:-"(missing step2 output)"}"
+                      printf '\n'
+                    fi
                     printf '%s\n' '--- Original Idea Body ---'
                     printf '%s\n' "${IDEA_BODY}"
                   }
                 )"
 
-                echo "Calling Gemini for step3... target=$TARGET"
-                GEMINI_CALLS_THIS_RUN=$((GEMINI_CALLS_THIS_RUN + 1))
+                RAW_DIR="${OUT_DIR}/heavy/raw/${s}"
+                echo "Heavy parallel stage ${s}: providers=${PROVIDERS[*]} orchestrator=${ORCH}"
+                heavy_parallel_stage "$s" "$PROMPT" "$RAW_DIR" "${PROVIDERS[@]}" || true
+
+                # orchestrator synthesis prompt
+                SYNTH_PROMPT="$(
+                  {
+                    printf '%s\n' "あなたはHeavyモードの親方（orchestrator）です。以下の複数モデル出力を統合し、${s} の最終アウトプットを作成してください。"
+                    printf '%s\n' '制約: Markdownのみ / 機密抽象化 / 未確認は未確認と明記 / 余計な前置き不要'
+                    printf '\n'
+                    printf '%s\n' '--- Inputs (raw model outputs) ---'
+                    for pr in "${PROVIDERS[@]}"; do
+                      printf '%s\n' "## Provider: ${pr}"
+                      if [ -f "${RAW_DIR}/${pr}.md" ]; then
+                        head -c 12000 "${RAW_DIR}/${pr}.md"
+                      else
+                        printf '%s\n' '(missing)'
+                      fi
+                      printf '\n'
+                    done
+                    printf '%s\n' '---'
+                    printf '%s\n' '出力は、このStepの標準テンプレに従ってください。'
+                  }
+                )"
 
                 set +e
-                OUT="$(gemini_generate "$PROMPT")"
-                RC=$?
+                case "$ORCH" in
+                  claude) OUT_SYNTH="$(anthropic_generate "$SYNTH_PROMPT")"; RC=$? ;;
+                  chatgpt) OUT_SYNTH="$(openai_generate "$SYNTH_PROMPT")"; RC=$? ;;
+                  gemini) OUT_SYNTH="$(gemini_generate "$SYNTH_PROMPT")"; RC=$? ;;
+                  *) OUT_SYNTH="__ERROR__: unknown orchestrator"; RC=99 ;;
+                esac
                 set -e
 
-                if [ $RC -ne 0 ] || echo "$OUT" | grep -q '^__ERROR__:'; then
-                  mkdir -p "$(dirname "$step_path")"
-                  printf '%s\n' "# 🧩 step3 (Gemini ERROR)" > "$step_path"
-                  printf '%s\n' "$OUT" >> "$step_path"
+                mkdir -p "$(dirname "$step_path")"
+                if [ $RC -ne 0 ] || echo "$OUT_SYNTH" | grep -q '^__ERROR__:'; then
+                  printf '%s\n' "# 🧩 ${s} (HEAVY synth ERROR)" > "$step_path"
+                  printf '%s\n' "$OUT_SYNTH" >> "$step_path"
                   processed_any=true
                   [ "$TARGET" = "soc" ] && SOC_CHANGED=true
                   continue 2
                 fi
 
-                mkdir -p "$(dirname "$step_path")"
                 {
-                  printf '# 🧩 step3 (Gemini Thinking)\n\n'
+                  printf '# 🧩 %s (HEAVY)\n\n' "$s"
                   printf '**Idea-ID:** %s\n' "$IDEA_ID"
                   printf '**Mode:** %s\n' "$MODE"
                   printf '**Target:** %s\n' "$TARGET"
+                  printf '**Orchestrator:** %s\n' "$ORCH"
+                  printf '**Providers Used:** %s\n' "${PROVIDERS[*]}"
                   printf '**Ran-At-UTC:** %s\n\n' "$NOW_UTC"
-                  printf '%s\n' "$OUT"
+                  printf '%s\n' "$OUT_SYNTH"
+                  printf '\n'
+                  printf '---\n'
+                  printf 'Raw outputs: heavy/raw/%s/{provider}.md\n' "$s"
                 } > "$step_path"
 
-                # final.md (simple)
-                FINAL_PATH="${OUT_DIR}/final.md"
-                {
-                  printf '# ✅ Research Result (Final)\n\n'
-                  printf '**Idea-ID:** %s\n' "$IDEA_ID"
-                  printf '**Mode:** %s\n' "$MODE"
-                  printf '**Target:** %s\n' "$TARGET"
-                  printf '**Completed-At-UTC:** %s\n\n' "$NOW_UTC"
-                  printf 'This directory contains stepwise outputs:\n'
-                  printf '- 01-step1.md\n- 02-step2.md\n- 03-step3.md\n'
-                } > "$FINAL_PATH"
+                # final.md (Step3の後にだけ更新)
+                if [ "$s" = "step3" ]; then
+                  FINAL_PATH="${OUT_DIR}/final.md"
+                  {
+                    printf '# ✅ Research Result (Final)\n\n'
+                    printf '**Idea-ID:** %s\n' "$IDEA_ID"
+                    printf '**Mode:** %s\n' "$MODE"
+                    printf '**Target:** %s\n' "$TARGET"
+                    printf '**Completed-At-UTC:** %s\n\n' "$NOW_UTC"
+                    printf 'Outputs:\n- 01-step1.md\n- 02-step2.md\n- 03-step3.md\n\n'
+                    printf 'Raw:\n- heavy/raw/step1/\n- heavy/raw/step2/\n- heavy/raw/step3/\n'
+                  } > "$FINAL_PATH"
+                fi
 
                 [ "$TARGET" = "soc" ] && SOC_CHANGED=true
 
               else
+                # placeholder (should be rare now)
                 mkdir -p "$(dirname "$step_path")"
                 {
                   printf '# 🧩 %s (placeholder)\n\n' "$s"
@@ -540,7 +616,6 @@ jobs:
                   printf '**Target:** %s\n' "$TARGET"
                   printf '**Ran-At-UTC:** %s\n' "$NOW_UTC"
                 } > "$step_path"
-
                 [ "$TARGET" = "soc" ] && SOC_CHANGED=true
               fi
             done
@@ -568,7 +643,7 @@ jobs:
                 | .state.status="done"
                 | .state.current_step=null
                 | .state.next_eligible_at_utc=null
-                | .process={ processed_at_utc:$processed_at_utc, worker:{name:"github-actions-stepwise-worker",version:6}, mode:"gemini-step1+step2+step3+soc-context" }
+                | .process={ processed_at_utc:$processed_at_utc, worker:{name:"github-actions-stepwise-worker",version:7}, mode:"heavy-parallel+synthesis" }
                 | .result={ repo:$result_repo, dir:$result_dir }
                 ' "$qfile" > "$PROCESSED_Q"
 
@@ -608,10 +683,12 @@ jobs:
             exit 0
           fi
 
+          # ---------- push SOC repo if needed ----------
           if [ "$SOC_CHANGED" = "true" ]; then
-            push_soc_repo "🔎 update research results (step1+step2+step3)"
+            push_soc_repo "🔎 update research results (heavy/normal)"
           fi
 
+          # ---------- commit/push Mylife (queue only, optional life results) ----------
           if [ -z "$(git status --porcelain -- research-queue research-results)" ]; then
             echo "No Mylife changes to commit."
             exit 0
@@ -620,7 +697,7 @@ jobs:
           git config user.email "actions@github.com"
           git config user.name "GitHub Actions"
           git add research-queue research-results
-          git commit -m "🤖 stepwise process research queue (gemini step3)" || echo "Nothing to commit."
+          git commit -m "🤖 stepwise process research queue (heavy enabled)" || echo "Nothing to commit."
 
           for i in 1 2 3; do
             echo "Mylife push attempt $i..."
