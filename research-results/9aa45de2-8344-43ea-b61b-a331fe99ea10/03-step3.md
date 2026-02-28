@@ -1,4 +1,4 @@
 # 🧩 step3 (Gemini ERROR)
 __ERROR__: You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://ai.google.dev/gemini-api/docs/rate-limits. To monitor your current usage, head to: https://ai.dev/rate-limit. 
 * Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 20, model: gemini-2.5-flash
-Please retry in 17.372280272s.
+Please retry in 34.019667136s.
