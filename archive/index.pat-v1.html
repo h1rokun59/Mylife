@@ -1,8 +1,8 @@
 <!DOCTYPE html>
 <html lang="ja">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>💡 Idea Capture</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='30'>⚡⚡⚡</text></svg>">
   <style>
@@ -28,7 +28,7 @@
       margin-bottom: 16px;
     }
     label { font-size: 0.8rem; color: #8b949e; display: block; margin-bottom: 8px; }
-    input[type="text"], textarea {
+    input[type="text"], input[type="password"], textarea {
       width: 100%;
       background: #0d1117;
       border: 1px solid #30363d;
@@ -76,6 +76,7 @@
     #voiceBtn { background: #21262d; color: #e6edf3; border: 1px solid #30363d; }
     #voiceBtn.listening { background: #da3633; color: #fff; border-color: #da3633; }
     #pushBtn { background: #238636; color: #fff; }
+    #pushBtn:disabled { background: #21262d; color: #8b949e; cursor: not-allowed; }
     #clearBtn { background: #21262d; color: #8b949e; border: 1px solid #30363d; flex: 0 0 auto; padding: 12px 16px; }
 
     .status { font-size: 0.85rem; margin-top: 12px; min-height: 20px; color: #8b949e; text-align: center; }
@@ -99,20 +100,6 @@
     .history-item strong { color: #e6edf3; }
     .history-item a { color: #58a6ff; text-decoration: none; }
     .history-item a:hover { text-decoration: underline; }
-
-    .note {
-      margin-top: 10px;
-      font-size: 0.82rem;
-      color: #8b949e;
-      line-height: 1.5;
-    }
-    .note code {
-      background: #0d1117;
-      border: 1px solid #30363d;
-      border-radius: 6px;
-      padding: 1px 6px;
-      color: #e6edf3;
-    }
   </style>
 </head>
 <body>
@@ -132,13 +119,10 @@
         <label>Repository Name</label>
         <input type="text" id="ghRepo" placeholder="Mylife">
       </div>
-
-      <div class="note">
-        ✅ Tokenは不要になりました。<br>
-        「🚀 GitHubへ」を押すと、<strong>Issue作成画面</strong>が別タブで開きます。<br>
-        GitHubにログインした状態で <code>Submit new issue</code> してください。
+      <div>
+        <label>Personal Access Token</label>
+        <input type="password" id="ghToken" placeholder="ghp_xxxxxxxxxxxx">
       </div>
-
       <button onclick="saveSettings()" style="background:#1f6feb; color:#fff; flex:none;">
         💾 保存
       </button>
@@ -190,7 +174,7 @@
 
 <!-- Recent pushes -->
 <div class="card" id="historyCard" style="display:none;">
-  <label>最近起票したアイデア（Issue作成画面URL）</label>
+  <label>最近プッシュしたアイデア</label>
   <div id="historyList"></div>
 </div>
 
@@ -202,23 +186,21 @@
   function loadSettings() {
     document.getElementById('ghUser').value = localStorage.getItem('ghUser') || 'h1rokun59';
     document.getElementById('ghRepo').value = localStorage.getItem('ghRepo') || 'Mylife';
+    document.getElementById('ghToken').value = localStorage.getItem('ghToken') || '';
 
-    // 旧版のTokenが残っていたら消す（重要）
-    localStorage.removeItem('ghToken');
-
-    // 設定は基本閉じる（必要ならopenでもOK）
-    document.getElementById('settingsDetails').removeAttribute('open');
+    if (localStorage.getItem('ghToken')) {
+      document.getElementById('settingsDetails').removeAttribute('open');
+    } else {
+      document.getElementById('settingsDetails').setAttribute('open', '');
+    }
     renderHistory();
   }
 
   function saveSettings() {
     localStorage.setItem('ghUser', document.getElementById('ghUser').value.trim());
     localStorage.setItem('ghRepo', document.getElementById('ghRepo').value.trim());
-
-    // Tokenは使わないので念のため消す
-    localStorage.removeItem('ghToken');
-
-    setStatus('✅ 設定を保存しました（Token不要になりました）', 'success');
+    localStorage.setItem('ghToken', document.getElementById('ghToken').value.trim());
+    setStatus('✅ 設定を保存しました', 'success');
     document.getElementById('settingsDetails').removeAttribute('open');
   }
 
@@ -321,11 +303,12 @@
     const text = document.getElementById('ideaText').value.trim();
     if (!text) { setStatus('❌ アイデアを入力してください', 'error'); return; }
 
-    const user = (localStorage.getItem('ghUser') || 'h1rokun59').trim();
-    const repo = (localStorage.getItem('ghRepo') || 'Mylife').trim();
+    const user = localStorage.getItem('ghUser') || 'h1rokun59';
+    const repo = localStorage.getItem('ghRepo') || 'Mylife';
+    const token = localStorage.getItem('ghToken');
 
-    if (!user || !repo) {
-      setStatus('❌ GitHub Username / Repo を設定してください', 'error');
+    if (!token) {
+      setStatus('❌ GitHub設定のTokenを入力してください', 'error');
       document.getElementById('settingsDetails').setAttribute('open', '');
       return;
     }
@@ -337,12 +320,8 @@
     const hasHeavy = actionTags.some(t => t.key === 'heavy');
     const executionMode = hasHeavy ? 'super-heavy' : 'normal';
 
-    // Actions: research / heavy（heavyが選ばれている場合はresearch必須）
-    const actionKeys = [...new Set(actionTags.map(t => t.key))];
-    if (hasHeavy && !actionKeys.includes('research')) actionKeys.push('research');
-
     const now = new Date();
-    const { dateStr, timeStr } = formatJstParts(now);
+    const { dateStr, timeStr, timestamp } = formatJstParts(now);
     const nowUtc = now.toISOString();
     const nowJst = `${dateStr} ${timeStr}`;
     const ideaId = generateIdeaId();
@@ -355,22 +334,28 @@
       ? `**TagKeys:** ${categoryTags.map(t => t.key).join(',')}`
       : '';
 
+    // Actions: research / heavy（heavy は super-heavy のスイッチとして扱う）
+    // heavy が選ばれている場合は research を必ず含める（UIでも自動選択してるが保険）
+    const actionKeys = [...new Set(actionTags.map(t => t.key))];
+    if (hasHeavy && !actionKeys.includes('research')) actionKeys.push('research');
+
     const actionsLine = actionKeys.length > 0
       ? `**Actions:** ${actionKeys.join(',')}`
       : '';
+
+    const modeLine = `**Mode:** ${executionMode}`;
 
     const metadataLines = [
       `**Idea-ID:** ${ideaId}`,
       `**Created-At-UTC:** ${nowUtc}`,
       `**Created-At-JST:** ${nowJst}`,
-      `**Mode:** ${executionMode}`,
+      modeLine,
       tagLine,
       tagKeysLine,
       actionsLine
     ].filter(Boolean).join('\n');
 
-    const body =
-`# 💡 ${nowJst}
+    const content = `# 💡 ${nowJst}
 
 ${metadataLines}
 
@@ -380,35 +365,51 @@ ${text}
 *Captured via Idea Capture App*
 `;
 
-    // Issue title は短め推奨
-    const title = `💡 ${nowJst} ${text.slice(0, 40)}${text.length > 40 ? '…' : ''}`;
+    const filename = `ideas/${dateStr}/${timestamp}.md`;
+    const encoded = btoa(unescape(encodeURIComponent(content)));
 
-    // labels: TagKeys + Actions を key で流し込む（後でrepo側でラベル整備するとベスト）
-    const labelKeys = [...new Set([
-      ...categoryTags.map(t => t.key),
-      ...actionKeys
-    ])];
+    const btn = document.getElementById('pushBtn');
+    btn.disabled = true;
+    setStatus('⏳ プッシュ中...', 'info');
 
-    const issueUrl =
-      `https://github.com/${encodeURIComponent(user)}/${encodeURIComponent(repo)}/issues/new` +
-      `?title=${encodeURIComponent(title)}` +
-      `&body=${encodeURIComponent(body)}` +
-      (labelKeys.length ? `&labels=${encodeURIComponent(labelKeys.join(','))}` : '');
+    try {
+      const res = await fetch(
+        `https://api.github.com/repos/${user}/${repo}/contents/${filename}`,
+        {
+          method: 'PUT',
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            message: `💡 idea: ${text.slice(0, 50)}${text.length > 50 ? '...' : ''}`,
+            content: encoded,
+          }),
+        }
+      );
 
-    window.open(issueUrl, '_blank', 'noopener,noreferrer');
-
-    history.unshift({
-      text: text.slice(0, 80),
-      tags: selectedTags.map(t => t.label),
-      time: nowJst,
-      url: issueUrl
-    });
-    if (history.length > 10) history.pop();
-    localStorage.setItem('ideaHistory', JSON.stringify(history));
-    renderHistory();
-
-    setStatus('✅ GitHub Issue作成画面を開きました（Submitしてください）', 'success');
-    clearIdea();
+      if (res.ok) {
+        const data = await res.json();
+        setStatus('✅ GitHubにプッシュしました！', 'success');
+        history.unshift({
+          text: text.slice(0, 80),
+          tags: selectedTags.map(t => t.label),
+          time: nowJst,
+          url: data.content && data.content.html_url ? data.content.html_url : ''
+        });
+        if (history.length > 10) history.pop();
+        localStorage.setItem('ideaHistory', JSON.stringify(history));
+        clearIdea();
+        renderHistory();
+      } else {
+        const err = await res.json();
+        setStatus(`❌ エラー: ${err.message}`, 'error');
+      }
+    } catch (e) {
+      setStatus(`❌ ネットワークエラー: ${e.message}`, 'error');
+    } finally {
+      btn.disabled = false;
+    }
   }
 
   function clearIdea() {
@@ -435,7 +436,7 @@ ${text}
       <div class="history-item">
         <strong>${h.text}${h.text.length >= 80 ? '...' : ''}</strong><br>
         <span>${(h.tags || []).join(' ')} · ${h.time || ''}</span>
-        ${h.url ? `<br><a href="${h.url}" target="_blank" rel="noopener noreferrer">Issue作成画面を開く</a>` : ''}
+        ${h.url ? `<br><a href="${h.url}" target="_blank" rel="noopener noreferrer">GitHubで開く</a>` : ''}
       </div>
     `).join('');
   }
